@@ -7,6 +7,9 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+permissions:
+  contents: write   # нужно, чтобы GITHUB_TOKEN мог создавать релизы
+
 jobs:
   build:
     strategy:

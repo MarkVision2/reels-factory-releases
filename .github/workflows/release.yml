@@ -1,0 +1,29 @@
+# CI: один пуш тега vX.Y.Z → сборка Mac + Windows → публикация в GitHub Releases.
+# Установленные копии подтянут обновление сами (electron-updater).
+name: build-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest      # Apple Silicon (.dmg arm64)
+          - os: windows-latest     # Windows (.exe nsis)
+          # - os: macos-13         # раскомментировать для Intel-маков (.dmg x64)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Build & publish
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"   # без подписи (для подписи Mac добавить сертификаты)

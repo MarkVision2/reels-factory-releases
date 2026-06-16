@@ -93,7 +93,6 @@ const createWindow = () => {
   win = new BrowserWindow({
     width: 980, height: 720, minWidth: 820, minHeight: 600,
     title: "AI Reels Factory",
-    backgroundColor: "#0f1116",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));

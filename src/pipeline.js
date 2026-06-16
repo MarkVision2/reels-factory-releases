@@ -6,7 +6,7 @@ import { synthesize, blocksFromWords } from "./tts.js";
 import { buildSegments } from "./match.js";
 import { renderFaceless, renderAvatar, downloadTo } from "./render-core.js";
 import { paths, ensureFolders, buildLocalCatalog, pickMusic, listSounds } from "./local-content.js";
-import { generateAvatarVideo } from "./heygen.js";
+import { generateAvatarVideo, uploadAudio } from "./heygen.js";
 import { transcribeWithWords } from "./stt.js";
 
 export const generateVideo = async ({ script, config = {}, onProgress = () => {} }) => {
@@ -32,24 +32,40 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
   const isOwnVideo = videoMode === "ownvideo" && config.sourceVideo;
   if (isAvatar || isOwnVideo) {
     try {
-      let avatarPath;
+      let avatarPath; let words = [];
       if (isAvatar) {
-        const url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, voiceId: heygenVoiceId, text: script, onProgress });
+        // 1. живая озвучка ElevenLabs (динамичная) — даёт и голос, и точные таймкоды титров
+        onProgress({ step: "tts", label: "Озвучка ElevenLabs…" });
+        const tts = await synthesize({
+          text: script, apiKey: elevenKey, voiceId, model: voiceModel,
+          voiceSettings: { stability: Number(voiceStability), similarity: Number(voiceSimilarity), style: Number(voiceStyle), speakerBoost: voiceSpeakerBoost },
+          outPath: path.join(workDir, "voice.mp3"),
+        });
+        words = tts.words;
+        // 2. отдаём наш голос HeyGen — аватар синхронит губы (фолбэк: HeyGen озвучит сам)
+        onProgress({ label: "HeyGen: загружаю голос…" });
+        let url;
+        try {
+          const assetId = await uploadAudio(heygenKey, await fs.readFile(tts.voicePath));
+          url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, audioAssetId: assetId, onProgress });
+        } catch (e) {
+          url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, voiceId: heygenVoiceId, text: script, onProgress });
+        }
         onProgress({ step: "download", label: "Скачиваю аватара…" });
         avatarPath = path.join(workDir, "avatar.mp4");
         await downloadTo(url, avatarPath);
       } else {
         avatarPath = config.sourceVideo; // твоё загруженное видео
+        onProgress({ step: "captions", label: "Распознаю речь…" });
+        try { const buf = await fs.readFile(avatarPath); words = (await transcribeWithWords({ audioBuffer: buf, apiKey: elevenKey })).words; } catch {}
       }
-      onProgress({ step: "captions", label: "Распознаю речь и делаю титры…" });
-      let words = [];
-      try { const buf = await fs.readFile(avatarPath); words = (await transcribeWithWords({ audioBuffer: buf, apiKey: elevenKey })).words; } catch {}
       // биролы-перебивки: каждый 2-й смысловой блок перекрываем клипом
       const inserts = [];
       try {
         const blocks = blocksFromWords(words);
         const vdur = words.length ? words[words.length - 1].t + words[words.length - 1].d : 0;
-        const insBlocks = blocks.filter((b, i) => i > 0 && i % 2 === 1).slice(0, 4);
+        // перебивки на каждом блоке (кроме первого) — короткие (≤2.2с), аватар проглядывает между ними
+        const insBlocks = blocks.filter((b, i) => i > 0).slice(0, 6);
         if (insBlocks.length) {
           onProgress({ step: "broll", label: "Подбираю перебивки…" });
           const catalog = await buildLocalCatalog({ p: P, project: activeProject, openaiKey }).catch(() => []);
@@ -57,7 +73,11 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
           for (const s of segs) {
             let cp = s.clip_path;
             if (!cp && s.clip_url) { cp = path.join(workDir, `ins${inserts.length}.mp4`); try { await downloadTo(s.clip_url, cp); } catch { cp = null; } }
-            if (cp) inserts.push({ start: s.start, end: s.end, path: cp });
+            if (cp) {
+              const st = Number(s.start);
+              const en = Math.min(Number(s.end) - 0.2, st + 2.2); // короткая перебивка
+              if (en > st + 0.6) inserts.push({ start: st, end: en, path: cp });
+            }
           }
         }
       } catch {}

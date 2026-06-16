@@ -107,9 +107,10 @@ const hexToAss = (hex) => {
 
 const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor = null } = {}) => {
   const accent = hexToAss(accentColor) || "&H0057C8FF"; // янтарь BGR по умолчанию
-  const fontSize = Math.round(outH * 0.05); // влезает по 2 слова в строку, не обрезается
-  const marginV = Math.round(outH * 0.24);
-  const pop = `{\\1c${accent}\\fscx108\\fscy108\\t(0,90,\\fscx102\\fscy102)}`; // мягче «поп», не вылезает за края
+  const fontSize = Math.round(outH * 0.052); // крупно, но влезает по 2 слова
+  const marginV = Math.round(outH * 0.23);
+  // активное слово: цвет-акцент + резкий поп (заброс масштаба → оседание) + толстый контур = «панч»
+  const pop = `{\\1c${accent}\\fscx116\\fscy116\\bord8\\t(0,70,\\fscx104\\fscy104)\\t(70,140,\\bord6)}`;
   const dlg = [];
   // ПО СЛОВАМ глобально: каждое слово показывается строго до начала следующего (без наложений)
   for (let k = 0; k < words.length; k += 1) {
@@ -136,7 +137,7 @@ const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor
     "ScaledBorderAndShadow: yes", "WrapStyle: 1", "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,1,0,0,0,100,100,0.4,0,1,5,3,2,40,40,${marginV},1`,
+    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00101010,&H90000000,1,0,0,0,100,100,0.5,0,1,6,2,2,46,46,${marginV},1`,
     "", "[Fonts]", "fontname: Montserrat0.ttf", fontEncoded, "",
     "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ].join("\n");
@@ -298,7 +299,11 @@ export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = 
   let prev = "base";
   ins.forEach((s, k) => {
     const idx = k + 1; const st = Number(s.start), en = Number(s.end);
-    filter.push(`[${idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,trim=0:${(en - st + 0.2).toFixed(2)},setpts=PTS-STARTPTS+${st.toFixed(2)}/TB[ov${k}]`);
+    const L = (en - st + 0.2);
+    const rate = (0.18 / Math.max(1, Math.round(L * 30))).toFixed(6);
+    const z = k % 2 === 0 ? `min(1.0+${rate}*on,1.18)` : `max(1.18-${rate}*on,1.0)`;
+    // наезд/отъезд на перебивку для динамики
+    filter.push(`[${idx}:v]scale=1296:2304:force_original_aspect_ratio=increase,crop=1296:2304,setsar=1,zoompan=z='${z}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,trim=0:${L.toFixed(2)},setpts=PTS-STARTPTS+${st.toFixed(2)}/TB[ov${k}]`);
     const out = `ovr${k}`;
     filter.push(`[${prev}][ov${k}]overlay=enable='between(t,${st.toFixed(2)},${en.toFixed(2)})':eof_action=pass[${out}]`);
     prev = out;

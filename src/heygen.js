@@ -17,11 +17,30 @@ export const pickRussianVoice = async (apiKey) => {
   return pool[Math.floor((Date.now() / 1000) % pool.length)].voice_id;
 };
 
-// сгенерировать видео аватара → вернуть URL готового видео
-export const generateAvatarVideo = async ({ apiKey, avatarId, voiceId, text, onProgress = () => {} }) => {
+// загрузить аудио (наш ElevenLabs-голос) в HeyGen → asset_id для lip-sync
+export const uploadAudio = async (apiKey, audioBuffer) => {
+  const res = await fetch("https://upload.heygen.com/v1/asset", {
+    method: "POST", headers: { "X-Api-Key": apiKey, "Content-Type": "audio/mpeg" }, body: audioBuffer,
+  });
+  if (!res.ok) throw new Error(`HeyGen upload ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  const data = await res.json();
+  const id = data?.data?.id || data?.data?.asset_id;
+  if (!id) throw new Error("HeyGen upload: нет asset id");
+  return id;
+};
+
+// сгенерировать видео аватара → вернуть URL готового видео.
+// voice: либо {audioAssetId} (наш голос, lip-sync) либо {text, voiceId} (TTS HeyGen).
+export const generateAvatarVideo = async ({ apiKey, avatarId, voiceId, text, audioAssetId, onProgress = () => {} }) => {
   if (!apiKey) throw new Error("Нет HeyGen API key");
   if (!avatarId) throw new Error("Нет HeyGen avatar_id");
-  const vId = voiceId || await pickRussianVoice(apiKey);
+  let voice;
+  if (audioAssetId) {
+    voice = { type: "audio", audio_asset_id: audioAssetId };
+  } else {
+    const vId = voiceId || await pickRussianVoice(apiKey);
+    voice = { type: "text", input_text: text, voice_id: vId };
+  }
   onProgress({ label: "HeyGen: создаю аватара…" });
   const gen = await fetch("https://api.heygen.com/v2/video/generate", {
     method: "POST",
@@ -29,7 +48,7 @@ export const generateAvatarVideo = async ({ apiKey, avatarId, voiceId, text, onP
     body: JSON.stringify({
       video_inputs: [{
         character: { type: "avatar", avatar_id: avatarId, avatar_style: "normal" },
-        voice: { type: "text", input_text: text, voice_id: vId },
+        voice,
       }],
       dimension: { width: 720, height: 1280 },
       quality: "high",

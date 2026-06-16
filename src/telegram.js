@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 const api = (token, method) => `https://api.telegram.org/bot${token}/${method}`;
 
 export const validateToken = async (token) => {
-  const res = await fetch(api(token, "getMe"));
+  const res = await fetch(api(token, "getMe"), { signal: AbortSignal.timeout(12000) });
   const d = await res.json();
   if (!d.ok) throw new Error(d.description || "неверный токен");
   return d.result; // {id, username, first_name}
@@ -42,7 +42,7 @@ export class TelegramBot {
   async _loop() {
     while (this.running) {
       try {
-        const res = await fetch(api(this.token, "getUpdates") + `?timeout=25&offset=${this.offset}`);
+        const res = await fetch(api(this.token, "getUpdates") + `?timeout=25&offset=${this.offset}`, { signal: AbortSignal.timeout(30000) });
         const d = await res.json();
         if (d.ok) {
           for (const u of d.result) {

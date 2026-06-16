@@ -97,37 +97,58 @@ const tcAss = (sec) => {
 };
 const clean = (s) => String(s || "").toUpperCase().replace(/[{}\r\n]/g, "").replace(/\\/g, "").trim();
 
-const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2 } = {}) => {
-  const accent = "&H0057C8FF"; // янтарь BGR
-  const fontSize = Math.round(outH * 0.058);
-  const marginV = Math.round(outH * 0.26);
+// hex #RRGGBB -> ASS &HBBGGRR
+const hexToAss = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!m) return null;
+  const r = m[1].slice(0, 2), g = m[1].slice(2, 4), b = m[1].slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
+};
+
+const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor = null } = {}) => {
+  const accent = hexToAss(accentColor) || "&H0057C8FF"; // янтарь BGR по умолчанию
+  const fontSize = Math.round(outH * 0.05); // влезает по 2 слова в строку, не обрезается
+  const marginV = Math.round(outH * 0.24);
+  const pop = `{\\1c${accent}\\fscx108\\fscy108\\t(0,90,\\fscx102\\fscy102)}`; // мягче «поп», не вылезает за края
   const dlg = [];
-  for (let i = 0; i < words.length; i += chunkWords) {
-    const line = words.slice(i, i + chunkWords).map((w) => ({ ...w, txt: clean(w.w) })).filter((w) => w.txt);
-    if (!line.length) continue;
-    for (let j = 0; j < line.length; j += 1) {
-      const st = line[j].t || 0;
-      const en = j + 1 < line.length ? line[j + 1].t || st + (line[j].d || 0.3) : st + (line[j].d || 0.3);
-      if (en <= st) continue;
-      const pop = `{\\1c${accent}\\fscx128\\fscy128\\t(0,90,\\fscx110\\fscy110)}`;
-      const text = line.map((w, k) => (k === j ? `${pop}${w.txt}{\\r}` : w.txt)).join(" ");
-      const fade = j === 0 ? "{\\fad(90,0)}" : "";
-      dlg.push(`Dialogue: 0,${tcAss(st)},${tcAss(en)},Default,,0,0,0,,${fade}${text}`);
-    }
+  // ПО СЛОВАМ глобально: каждое слово показывается строго до начала следующего (без наложений)
+  for (let k = 0; k < words.length; k += 1) {
+    const w = words[k];
+    const st = w.t || 0;
+    let en = (k + 1 < words.length) ? (words[k + 1].t || st + (w.d || 0.3)) : st + (w.d || 0.3);
+    if (en <= st) continue;
+    if (en - st > 1.6) en = st + 1.6; // не держать титр слишком долго на паузах
+    const chunkStart = Math.floor(k / chunkWords) * chunkWords;
+    const lineWords = words.slice(chunkStart, chunkStart + chunkWords);
+    const parts = []; let activeOk = false;
+    lineWords.forEach((ww, idx) => {
+      const txt = clean(ww.w);
+      if (!txt) return;
+      if (chunkStart + idx === k) { parts.push(`${pop}${txt}{\\r}`); activeOk = true; }
+      else parts.push(txt);
+    });
+    if (!activeOk || !parts.length) continue;
+    const fade = (k === chunkStart) ? "{\\fad(90,0)}" : "";
+    dlg.push(`Dialogue: 0,${tcAss(st)},${tcAss(en)},Default,,0,0,0,,${fade}${parts.join(" ")}`);
   }
   const header = [
     "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
     "ScaledBorderAndShadow: yes", "WrapStyle: 1", "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,1,0,0,0,100,100,0.4,0,1,5,3,2,80,80,${marginV},1`,
+    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&HB0000000,1,0,0,0,100,100,0.4,0,1,5,3,2,40,40,${marginV},1`,
     "", "[Fonts]", "fontname: Montserrat0.ttf", fontEncoded, "",
     "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ].join("\n");
   return `${header}\n${dlg.join("\n")}\n`;
 };
 
-const loadFont = async (workDir) => {
+const loadFont = async (workDir, customPath = null) => {
+  // свой шрифт пользователя (брендбук) — приоритет
+  if (customPath) {
+    const sz = await fs.stat(customPath).then((s) => s.size).catch(() => 0);
+    if (sz > 10000) return { path: customPath, buf: await fs.readFile(customPath) };
+  }
   const local = path.resolve(__dirname, "../assets/Montserrat.ttf");
   const sz = await fs.stat(local).then((s) => s.size).catch(() => 0);
   if (sz > 50000) return { path: local, buf: await fs.readFile(local) };
@@ -143,7 +164,7 @@ const loadFont = async (workDir) => {
 
 // --- ЛОКАЛЬНАЯ faceless-склейка: клипы по сегментам + голос + музыка + титры ---
 // segments: [{start,end,text, clip_path | clip_url, fit?, in?}], voicePath, words[], musicPath?
-export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, outPath }) => {
+export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, sfxPaths = [], fontPath = null, accentColor = null, outPath }) => {
   const D = await ffprobeDuration(voicePath);
   if (!segments.length) throw new Error("нет сегментов");
 
@@ -161,12 +182,12 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   if (!clips.length) throw new Error("не удалось скачать ни одного клипа");
 
   // титры (ASS + вшитый шрифт)
-  const font = await loadFont(workDir);
+  const font = await loadFont(workDir, fontPath);
   const assPath = path.join(workDir, "cap.ass");
   let hasCaps = false;
   let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
   if (font && words.length) {
-    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf) }));
+    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor }));
     const fontDir = path.dirname(font.path);
     const fontsConf = path.join(workDir, "fonts.conf");
     await fs.writeFile(fontsConf, `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n<dir>${fontDir}</dir>\n<cachedir>${path.join(workDir, "fc-cache")}</cachedir>\n</fontconfig>\n`);
@@ -184,6 +205,20 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   args.push("-i", voicePath);
   let musicIdx = -1;
   if (musicPath) { args.push("-stream_loop", "-1", "-i", musicPath); musicIdx = voiceIdx + 1; }
+
+  // звуки переходов: на каждом стыке клипов — короткий SFX из папки «Звуки»
+  const sfx = (sfxPaths || []).filter(Boolean);
+  const sfxInputs = [];
+  if (sfx.length && clips.length > 1) {
+    let acc = 0;
+    for (let k = 0; k < clips.length - 1; k += 1) {
+      acc += clips[k].dur;
+      const file = sfx[k % sfx.length];
+      const idx = (musicIdx >= 0 ? musicIdx : voiceIdx) + 1 + sfxInputs.length;
+      args.push("-i", file);
+      sfxInputs.push({ idx, tMs: Math.max(0, Math.round((acc - 0.12) * 1000)) });
+    }
+  }
 
   const filter = [];
   clips.forEach((c, i) => {
@@ -213,13 +248,19 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
     const escAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
     filter.push(`[gr]ass='${escAss}'[vout]`); vlabel = "vout";
   }
+  const aBase = sfxInputs.length ? "amain" : "aout";
   if (musicIdx >= 0) {
     filter.push(`[${voiceIdx}:a]aresample=44100,asplit=2[va][vsc]`);
     filter.push(`[${musicIdx}:a]aresample=44100,volume=${musicVolume}[mraw]`);
     filter.push(`[mraw][vsc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300[mduck]`);
-    filter.push(`[va][mduck]amix=inputs=2:normalize=0:dropout_transition=0,alimiter=limit=0.95[aout]`);
+    filter.push(`[va][mduck]amix=inputs=2:normalize=0:dropout_transition=0,alimiter=limit=0.95[${aBase}]`);
   } else {
-    filter.push(`[${voiceIdx}:a]aresample=44100[aout]`);
+    filter.push(`[${voiceIdx}:a]aresample=44100[${aBase}]`);
+  }
+  if (sfxInputs.length) {
+    sfxInputs.forEach((s, i) => filter.push(`[${s.idx}:a]aresample=44100,adelay=${s.tMs}|${s.tMs},volume=0.6[sfx${i}]`));
+    const mixIns = ["[amain]", ...sfxInputs.map((_, i) => `[sfx${i}]`)].join("");
+    filter.push(`${mixIns}amix=inputs=${sfxInputs.length + 1}:normalize=0:dropout_transition=0[aout]`);
   }
   args.push("-filter_complex", filter.join(";"), "-map", `[${vlabel}]`, "-map", "[aout]");
   args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",

@@ -1,6 +1,6 @@
 {
   "name": "reels-factory-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "AI Reels Factory — настольное приложение (ТЗ → видео с озвучкой), полностью локальный рендер",
   "author": "MarkVision",
   "main": "main.js",
@@ -23,7 +23,7 @@
     "productName": "AI Reels Factory",
     "files": ["main.js", "preload.cjs", "src/**", "renderer/**", "assets/**"],
     "asarUnpack": ["node_modules/ffmpeg-static/**"],
-    "mac": { "target": "dmg", "category": "public.app-category.productivity" },
+    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.productivity" },
     "win": { "target": "nsis" },
     "publish": { "provider": "github", "owner": "MarkVision2", "repo": "reels-factory-releases" }
   }

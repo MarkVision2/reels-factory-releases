@@ -16,24 +16,40 @@ const PRODUCT_RE = /(инструмент|автоматиз|запуск|рек
 const FREEDOM_RE = /(свобод|успех|деньг|больше|меньше|результат|лайфстайл|отдых|путешеств|чек)/i;
 const TEAM_RE = /(команд|эксперт|стратег|спикер|клиент|опыт|кейс)/i;
 
-// Эвристическая раскладка ТОЛЬКО по каталогу (никакого внешнего стока).
+// Эвристическая раскладка: каталог если есть, иначе — европейский Pexels-запрос (без краша на пустом каталоге).
+const heuristicQuery = (t) =>
+  PRODUCT_RE.test(t) ? "modern office laptop screen marketing dashboard"
+  : FREEDOM_RE.test(t) ? "young european caucasian success lifestyle freedom"
+  : TEAM_RE.test(t) ? "young european caucasian business team meeting office"
+  : "young european caucasian marketer working laptop office";
+
+const words = (s) => String(s || "").toLowerCase().replace(/[^a-zа-яё0-9\s]/gi, " ").split(/\s+/).filter((w) => w.length > 3);
+
 const heuristicPicks = (blocks, cat) => {
-  const screens = cat.filter((c) => c.type === "screen");
-  const work = cat.filter((c) => c.type === "work");
-  const people = cat.filter((c) => c.type === "people");
-  const life = cat.filter((c) => c.type === "lifestyle");
-  const pool = (arr, i) => arr.length ? arr[i % arr.length] : null;
+  const used = new Set();
+  const byType = (t) => cat.filter((c) => c.type === t && !used.has(c.id));
   const picks = [];
-  let si = 0, wi = 0, li = 0, pi = 0;
   blocks.forEach((b, i) => {
-    const t = b.text;
-    let c = null;
-    if (PRODUCT_RE.test(t)) c = pool(screens, si++) || pool(work, wi++);
-    else if (FREEDOM_RE.test(t)) c = pool(life, li++) || pool(work, wi++);
-    else if (TEAM_RE.test(t)) c = pool(people, pi++) || pool(work, wi++);
-    else c = pool(work, wi++) || pool(screens, si++);
-    if (!c) c = cat[i % cat.length];
-    picks.push({ i, id: c.id });
+    const bw = new Set(words(b.text));
+    // 1) лучший клип по совпадению ОПИСАНИЯ/тегов с фразой
+    let best = null, bestScore = 0;
+    for (const c of cat) {
+      if (used.has(c.id)) continue;
+      let score = 0;
+      for (const w of words(`${c.desc} ${(c.tags || []).join(" ")} ${c.name}`)) if (bw.has(w)) score += 1;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    // 2) иначе по смыслу фразы (тип), 3) иначе Pexels
+    if (!best) {
+      const t = b.text;
+      const cand = PRODUCT_RE.test(t) ? (byType("screen")[0] || byType("work")[0])
+        : FREEDOM_RE.test(t) ? (byType("lifestyle")[0] || byType("work")[0])
+        : TEAM_RE.test(t) ? (byType("people")[0] || byType("work")[0])
+        : (byType("work")[0] || byType("screen")[0]);
+      best = cand || null;
+    }
+    if (best) { used.add(best.id); picks.push(best.type === "screen" ? { i, screen: best.id } : { i, clip: best.id }); }
+    else picks.push({ i, query: heuristicQuery(b.text), must: [] }); // нет подходящего локального → Pexels
   });
   return picks;
 };
@@ -41,7 +57,7 @@ const heuristicPicks = (blocks, cat) => {
 // GPT-раскладка (если есть ключ OpenAI) — скрин / свой клип / европейский Pexels / ИИ-генерация.
 const gptPicks = async (blocks, cat, openaiKey, genOn = false) => {
   const screens = cat.filter((c) => c.type === "screen").map((c) => `${c.id} (${(c.tags || []).join(", ")})`).join("; ");
-  const own = cat.filter((c) => c.type !== "screen").map((c) => `${c.id} [${c.type}] ${(c.tags || []).slice(0, 3).join(", ")}`).join("; ");
+  const own = cat.filter((c) => c.type !== "screen").map((c) => `${c.id} [${c.type}] ${c.name}: ${c.desc || (c.tags || []).join(", ")}`).join("; ");
   const segList = blocks.map((b, i) => `${i}: "${b.text}"`).join("\n");
   const prompt =
     'Ты монтажёр вертикальных Reels для маркетологов в Казахстане. Для КАЖДОГО сегмента выбери ОДИН источник. ВАРИАНТЫ:\n' +

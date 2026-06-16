@@ -35,12 +35,19 @@ const blocksFromWords = (words) => {
 };
 
 // text -> { voicePath, words, blocks, vdur }
-export const synthesize = async ({ text, apiKey, voiceId = "IKne3meq5aSn9XLyUdCD", outPath }) => {
+// voiceSettings: {stability, similarity, style, speakerBoost} — для живости/динамики.
+export const synthesize = async ({ text, apiKey, voiceId = "IKne3meq5aSn9XLyUdCD", model = "eleven_multilingual_v2", voiceSettings = {}, outPath }) => {
   if (!apiKey) throw new Error("Нет ключа ElevenLabs");
+  const vs = {
+    stability: Number.isFinite(voiceSettings.stability) ? voiceSettings.stability : 0.4,
+    similarity_boost: Number.isFinite(voiceSettings.similarity) ? voiceSettings.similarity : 0.75,
+    style: Number.isFinite(voiceSettings.style) ? voiceSettings.style : 0.45,
+    use_speaker_boost: voiceSettings.speakerBoost !== false,
+  };
   const res = await fetch(`${ELEVEN_BASE}/${voiceId}/with-timestamps?output_format=mp3_44100_128`, {
     method: "POST",
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, model_id: "eleven_multilingual_v2" }),
+    body: JSON.stringify({ text, model_id: model, voice_settings: vs }),
   });
   if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();

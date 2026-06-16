@@ -94,10 +94,8 @@ const createWindow = () => {
     width: 980, height: 720, minWidth: 820, minHeight: 600,
     title: "AI Reels Factory",
     backgroundColor: "#0f1116",
-    show: false,
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
-  win.once("ready-to-show", () => win.show());
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
   win.webContents.on("unresponsive", () => console.log("[ОКНО ЗАВИСЛО]"));

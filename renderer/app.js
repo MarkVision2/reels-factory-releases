@@ -189,6 +189,26 @@ $("setFontBtn").addEventListener("click", async () => {
 $("clearFontBtn").addEventListener("click", async () => { await window.api.clearFont(); refreshFont(); });
 refreshFont();
 
+// проекты
+async function refreshProjects() {
+  const { projects, active } = await window.api.listProjects();
+  const sel = $("projSel");
+  sel.innerHTML = "";
+  const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "Все папки";
+  sel.appendChild(optAll);
+  projects.forEach((p) => { const o = document.createElement("option"); o.value = p; o.textContent = p; sel.appendChild(o); });
+  sel.value = active || "";
+}
+refreshProjects();
+$("projSel").addEventListener("change", () => window.api.setActiveProject($("projSel").value));
+$("projNew").addEventListener("click", async () => {
+  const name = prompt("Название нового проекта:");
+  if (!name) return;
+  const r = await window.api.createProject(name);
+  if (r.ok) { await refreshProjects(); $("projSel").value = r.name; }
+  else alert(r.error || "Не удалось создать");
+});
+
 // создать видео из окна
 $("createBtn").addEventListener("click", async () => {
   const script = $("scriptInput").value.trim();
@@ -197,7 +217,7 @@ $("createBtn").addEventListener("click", async () => {
   $("createBtn").disabled = true;
   const r = await window.api.createVideo(script);
   $("createBtn").disabled = false;
-  if (r.ok) setJob("ok", "✅ Готово — смотри во вкладке «Мои видео»");
+  if (r.ok) setJob("ok", "✅ Готово — во вкладке «Готовые видео»" + (r.sentToTg ? " + отправлено в Telegram" : ""));
   else setJob("err", "❌ " + r.error);
 });
 

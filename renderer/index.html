@@ -83,7 +83,12 @@
     <!-- СОЗДАТЬ -->
     <section class="tab active" id="tab-create">
       <h1>Создать видео из сценария</h1>
-      <p class="hint">Вставь текст сценария — соберу ролик с озвучкой, титрами и музыкой. Или просто напиши сценарий своему Telegram-боту.</p>
+      <div class="project-bar">
+        <span>Проект:</span>
+        <select id="projSel"></select>
+        <button id="projNew">＋ Новый проект</button>
+      </div>
+      <p class="hint">Вставь текст сценария — соберу ролик из контента выбранного проекта. Или напиши/надиктуй боту в Telegram.</p>
       <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
       <div class="row">
         <button class="primary" id="createBtn">Создать видео</button>

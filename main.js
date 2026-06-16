@@ -5,10 +5,11 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { generateVideo } from "./src/pipeline.js";
-import { TelegramBot, validateToken, sendMessage, sendDocument } from "./src/telegram.js";
+import { TelegramBot, validateToken, sendMessage, sendDocument, getFileLink } from "./src/telegram.js";
 import electronUpdater from "electron-updater";
-import { paths, ensureFolders, readMeta, writeMeta } from "./src/local-content.js";
+import { paths, ensureFolders, readMeta, writeMeta, listProjects, createProject } from "./src/local-content.js";
 import { thumbDataUrl } from "./src/thumbs.js";
+import { transcribeAudio } from "./src/stt.js";
 
 const { autoUpdater } = electronUpdater;
 const P = paths();
@@ -22,6 +23,7 @@ const DEFAULT_CONFIG = {
   genProvider: "none", falKey: "", falModel: "kling", genMax: 2,
   fontPath: "", fontName: "", accentColor: "#42C8F5",
   voiceStability: 0.35, voiceStyle: 0.55, voiceSimilarity: 0.8,
+  activeProject: "", telegramChatId: "",
 };
 
 let win = null, tray = null, bot = null, botInfo = null;
@@ -49,15 +51,29 @@ const restartBot = async () => {
   if (!cfg.telegramToken) { toRenderer("bot:status", { running: false }); return; }
   try { botInfo = await validateToken(cfg.telegramToken); }
   catch (e) { toRenderer("bot:status", { running: false, error: e.message }); return; }
-  bot = new TelegramBot(cfg.telegramToken, async ({ chatId, text }) => {
+  bot = new TelegramBot(cfg.telegramToken, async ({ chatId, text, voiceFileId }) => {
     try {
-      await sendMessage(cfg.telegramToken, chatId, "🎬 Принял сценарий, монтирую ролик (1-2 мин)…");
-      toRenderer("job:start", { source: "telegram", text });
-      const r = await makeVideo(text, (p) => toRenderer("job:progress", p));
+      // запоминаем чат — туда же шлём ролики, созданные из окна
+      const c0 = await loadConfig();
+      if (String(c0.telegramChatId) !== String(chatId)) { c0.telegramChatId = chatId; await saveConfig(c0); }
+      // голосовое → расшифровка
+      let script = text;
+      if (voiceFileId) {
+        await sendMessage(cfg.telegramToken, chatId, "🎧 Слушаю голосовое…");
+        const link = await getFileLink(cfg.telegramToken, voiceFileId);
+        const audio = Buffer.from(await (await fetch(link)).arrayBuffer());
+        script = await transcribeAudio({ audioBuffer: audio, apiKey: cfg.elevenKey });
+        if (!script) { await sendMessage(cfg.telegramToken, chatId, "Не разобрал голосовое, попробуй ещё раз."); return; }
+        await sendMessage(cfg.telegramToken, chatId, "📝 Услышал: " + script.slice(0, 300));
+      }
+      if (!script) return;
+      await sendMessage(cfg.telegramToken, chatId, "🎬 Принял, монтирую ролик (1-2 мин)…");
+      toRenderer("job:start", { source: "telegram", text: script });
+      const r = await makeVideo(script, (p) => toRenderer("job:progress", p));
       await sendDocument(cfg.telegramToken, chatId, r.outPath, "Готово ✅");
       toRenderer("job:done", { outPath: r.outPath, source: "telegram" });
     } catch (e) {
-      await sendMessage(cfg.telegramToken, chatId, "⚠️ Не получилось собрать ролик: " + e.message).catch(() => {});
+      await sendMessage(cfg.telegramToken, chatId, "⚠️ Не получилось: " + e.message).catch(() => {});
       toRenderer("job:error", { error: e.message });
     }
   }, (m) => toRenderer("bot:log", m));
@@ -126,8 +142,13 @@ ipcMain.handle("video:create", async (_e, script) => {
   toRenderer("job:start", { source: "app", text: script });
   try {
     const r = await makeVideo(script, (p) => toRenderer("job:progress", p));
+    // отправляем готовое и в Telegram (если бот настроен и есть чат)
+    const cfg = await loadConfig();
+    if (cfg.telegramToken && cfg.telegramChatId) {
+      sendDocument(cfg.telegramToken, cfg.telegramChatId, r.outPath, "Готово ✅").catch(() => {});
+    }
     toRenderer("job:done", { outPath: r.outPath, source: "app" });
-    return { ok: true, outPath: r.outPath };
+    return { ok: true, outPath: r.outPath, sentToTg: !!(cfg.telegramToken && cfg.telegramChatId) };
   } catch (e) { toRenderer("job:error", { error: e.message }); return { ok: false, error: e.message }; }
 });
 ipcMain.handle("video:reveal", async (_e, p) => { shell.showItemInFolder(p); });
@@ -197,6 +218,24 @@ ipcMain.handle("content:setClipMeta", async (_e, filePath, patch) => {
   return { ok: true };
 });
 ipcMain.handle("content:removeFile", async (_e, p) => { try { await fs.rm(p, { force: true }); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+
+// --- проекты (у каждого свои Видео/Музыка/Звуки) ---
+ipcMain.handle("projects:list", async () => {
+  await ensureFolders(P);
+  const cfg = await loadConfig();
+  return { projects: await listProjects(P), active: cfg.activeProject || "" };
+});
+ipcMain.handle("projects:create", async (_e, name) => {
+  try {
+    const clean = await createProject(name, P);
+    const cfg = await loadConfig(); cfg.activeProject = clean; await saveConfig(cfg);
+    return { ok: true, name: clean };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("projects:setActive", async (_e, name) => {
+  const cfg = await loadConfig(); cfg.activeProject = name || ""; await saveConfig(cfg);
+  return { ok: true };
+});
 
 // брендбук: загрузить свой шрифт для титров
 ipcMain.handle("brand:setFont", async () => {

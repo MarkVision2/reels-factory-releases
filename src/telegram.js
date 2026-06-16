@@ -19,6 +19,14 @@ export const sendMessage = async (token, chatId, text) => {
   return res.json();
 };
 
+// ссылка на скачивание файла Telegram (для голосовых)
+export const getFileLink = async (token, fileId) => {
+  const res = await fetch(api(token, "getFile") + `?file_id=${fileId}`);
+  const d = await res.json();
+  if (!d.ok) throw new Error(d.description || "getFile failed");
+  return `https://api.telegram.org/file/bot${token}/${d.result.file_path}`;
+};
+
 export const sendDocument = async (token, chatId, filePath, caption = "") => {
   const buf = await fs.readFile(filePath);
   const form = new FormData();
@@ -48,8 +56,11 @@ export class TelegramBot {
           for (const u of d.result) {
             this.offset = u.update_id + 1;
             const msg = u.message;
-            if (msg && msg.text && !msg.text.startsWith("/")) {
+            if (!msg) continue;
+            if (msg.text && !msg.text.startsWith("/")) {
               this.onMessage({ chatId: msg.chat.id, text: msg.text, from: msg.from });
+            } else if (msg.voice || msg.audio) {
+              this.onMessage({ chatId: msg.chat.id, voiceFileId: (msg.voice || msg.audio).file_id, from: msg.from });
             }
           }
         }

@@ -14,7 +14,7 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
     openaiKey = null, pexelsKey = null,
     musicUrl = null, musicVolume = 0.05,
     genProvider = "none", falKey = "", falModel = "kling", genMax = 2,
-    fontPath = null, accentColor = null,
+    fontPath = null, accentColor = null, activeProject = "",
   } = config;
   const gen = (genProvider === "fal" && falKey) ? { provider: "fal", key: falKey, model: falModel, max: Number(genMax) || 2 } : null;
 
@@ -36,19 +36,19 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
     });
 
     onProgress({ step: "match", label: "Подбираю кадры…" });
-    const catalog = await buildLocalCatalog({ p: P, openaiKey, onProgress }).catch(() => []);
+    const catalog = await buildLocalCatalog({ p: P, project: activeProject, openaiKey, onProgress }).catch(() => []);
     const segments = await buildSegments({ blocks, vdur, catalog, openaiKey, pexelsKey, gen, onProgress });
     if (!segments.some((s) => s.clip_path || s.clip_url)) {
       throw new Error("Нет кадров. Добавь свои клипы в папку «Мои видео/Видео» или вставь ключ Pexels в «Настройке».");
     }
 
     // музыка: своя из папки, иначе по URL, иначе без музыки
-    let musicPath = await pickMusic(P);
+    let musicPath = await pickMusic(P, activeProject);
     if (!musicPath && musicUrl) {
       musicPath = path.join(workDir, "music.mp3");
       try { await downloadTo(musicUrl, musicPath); } catch { musicPath = null; }
     }
-    const sfxPaths = await listSounds(P);
+    const sfxPaths = await listSounds(P, activeProject);
 
     onProgress({ step: "render", label: "Монтирую видео…" });
     const r = await renderFaceless({ workDir, segments, voicePath, words, musicPath, musicVolume, sfxPaths, fontPath, accentColor, outPath });

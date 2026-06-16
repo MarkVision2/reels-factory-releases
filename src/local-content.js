@@ -81,9 +81,24 @@ const visionTag = async (jpgPath, openaiKey) => {
   return { type: j.type || "work", fit: !!j.fit, tags: Array.isArray(j.tags) ? j.tags.slice(0, 3) : [] };
 };
 
-// каталог из локальной папки «Видео» (с кэшем по сигнатуре файлов)
-export const buildLocalCatalog = async ({ p = paths(), openaiKey = null, onProgress = () => {} } = {}) => {
-  const files = await walk(p.videos, VIDEO_EXT); // рекурсивно — все папки-проекты
+// список проектов = подпапки в «Видео» (по ним же есть Музыка/Звуки)
+export const listProjects = async (p = paths()) => {
+  try {
+    const ents = await fs.readdir(p.videos, { withFileTypes: true });
+    return ents.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
+  } catch { return []; }
+};
+export const createProject = async (name, p = paths()) => {
+  const clean = String(name || "").replace(/[\/\\:*?"<>|]/g, "").trim();
+  if (!clean) throw new Error("Пустое имя");
+  for (const d of [p.videos, p.music, p.sounds]) await fs.mkdir(path.join(d, clean), { recursive: true });
+  return clean;
+};
+const subOrRoot = (root, project) => (project ? path.join(root, project) : root);
+
+// каталог из «Видео/<проект>» (или всё, если проект не задан)
+export const buildLocalCatalog = async ({ p = paths(), project = "", openaiKey = null, onProgress = () => {} } = {}) => {
+  const files = await walk(subOrRoot(p.videos, project), VIDEO_EXT); // рекурсивно внутри проекта
   // мета читаем по папке каждого файла
   const metaByDir = {};
   const getMeta = async (dir) => { if (!metaByDir[dir]) metaByDir[dir] = await readMeta(dir); return metaByDir[dir]; };
@@ -91,8 +106,9 @@ export const buildLocalCatalog = async ({ p = paths(), openaiKey = null, onProgr
   const stats = await Promise.all(files.map((f) => fs.stat(f).then((s) => `${f}:${s.size}`).catch(() => "")));
   await Promise.all([...new Set(files.map((f) => path.dirname(f)))].map(getMeta));
   const sig = stats.sort().join("|") + "##" + JSON.stringify(metaByDir);
+  const cacheFile = path.join(p.root, `.catalog-${project || "all"}.json`);
   try {
-    const cache = JSON.parse(await fs.readFile(p.catalogCache, "utf8"));
+    const cache = JSON.parse(await fs.readFile(cacheFile, "utf8"));
     if (cache.sig === sig) return cache.catalog;
   } catch {}
 
@@ -126,7 +142,7 @@ export const buildLocalCatalog = async ({ p = paths(), openaiKey = null, onProgr
     } catch {}
   }
   await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
-  await fs.writeFile(p.catalogCache, JSON.stringify({ sig, catalog })).catch(() => {});
+  await fs.writeFile(cacheFile, JSON.stringify({ sig, catalog })).catch(() => {});
   onProgress({ done: files.length, total: files.length });
   return catalog;
 };
@@ -147,8 +163,8 @@ const audioDurations = async (files, root) => {
 };
 
 // фоновая музыка — только полноценные треки (≥18с), короткие звуки игнорируем
-export const pickMusic = async (p = paths()) => {
-  const files = await walk(p.music, AUDIO_EXT);
+export const pickMusic = async (p = paths(), project = "") => {
+  const files = await walk(subOrRoot(p.music, project), AUDIO_EXT);
   if (!files.length) return null;
   const durs = await audioDurations(files, p.root);
   const tracks = durs.filter((d) => d.dur >= 18).map((d) => d.f);
@@ -157,8 +173,8 @@ export const pickMusic = async (p = paths()) => {
 };
 
 // звуки переходов — только короткие (≤8с)
-export const listSounds = async (p = paths()) => {
-  const files = await walk(p.sounds, AUDIO_EXT);
+export const listSounds = async (p = paths(), project = "") => {
+  const files = await walk(subOrRoot(p.sounds, project), AUDIO_EXT);
   if (!files.length) return [];
   const durs = await audioDurations(files, p.root);
   const sfx = durs.filter((d) => d.dur > 0 && d.dur <= 8).map((d) => d.f);

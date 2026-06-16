@@ -96,6 +96,16 @@ const createWindow = () => {
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // принудительная перерисовка окна после загрузки — лечит «белый/чёрный» экран (кадр не выводится)
+  win.webContents.on("did-finish-load", () => {
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      const b = win.getBounds();
+      win.setBounds({ ...b, height: b.height + 1 });
+      win.setBounds(b);
+      win.webContents.invalidate?.();
+    }, 200);
+  });
   win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
   win.webContents.on("unresponsive", () => console.log("[ОКНО ЗАВИСЛО]"));
   win.webContents.on("render-process-gone", (_e, d) => console.log("[renderer упал]", d?.reason));

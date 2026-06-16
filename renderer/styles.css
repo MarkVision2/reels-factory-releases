@@ -55,7 +55,9 @@ button.primary:disabled { opacity: .5; cursor: default; }
 .video-item button { background: #232a3a; color: var(--txt); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
 .empty { color: var(--mut); font-size: 14px; }
 
-/* готовые видео — как в Finder: маленькие квадратики + имя */
+/* готовые видео — группировка по датам */
+.date-header { font-size: 13px; font-weight: 600; color: var(--mut); margin: 18px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.date-header:first-child { margin-top: 0; }
 .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 14px 10px; align-items: start; }
 .fv-item { cursor: default; }
 .fv-thumb { position: relative; width: 100%; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden; background: #0b0d12; border: 1px solid var(--line); }

@@ -281,17 +281,26 @@ ipcMain.handle("brand:clearFont", async () => {
 });
 ipcMain.handle("video:list", async () => {
   await ensureFolders(P);
-  try {
-    const files = (await fs.readdir(P.output)).filter((f) => f.endsWith(".mp4"));
-    const items = await Promise.all(files.map(async (f) => {
-      const full = path.join(P.output, f); const st = await fs.stat(full);
-      let meta = {};
-      try { meta = JSON.parse(await fs.readFile(full.replace(/\.mp4$/, ".json"), "utf8")); } catch {}
-      const thumb = await thumbDataUrl(full, full.replace(/\.mp4$/, ".jpg"), 1);
-      return { path: full, name: f, size: st.size, mtime: st.mtimeMs, thumb, title: meta.title || null, description: meta.description || "", duration: meta.duration || null, created: meta.created || null };
-    }));
-    return items.sort((a, b) => b.mtime - a.mtime);
-  } catch { return []; }
+  const out = [];
+  const walk = async (dir) => {
+    let ents = [];
+    try { ents = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.name.startsWith(".")) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) await walk(full);
+      else if (e.name.endsWith(".mp4")) {
+        const st = await fs.stat(full).catch(() => ({ size: 0, mtimeMs: 0 }));
+        let meta = {};
+        try { meta = JSON.parse(await fs.readFile(full.replace(/\.mp4$/, ".json"), "utf8")); } catch {}
+        const thumb = await thumbDataUrl(full, full.replace(/\.mp4$/, ".jpg"), 1);
+        const created = meta.created || new Date(st.mtimeMs).toISOString();
+        out.push({ path: full, name: e.name, size: st.size, mtime: st.mtimeMs, thumb, title: meta.title || null, description: meta.description || "", duration: meta.duration || null, created, date: created.slice(0, 10) });
+      }
+    }
+  };
+  await walk(P.output);
+  return out.sort((a, b) => b.mtime - a.mtime);
 });
 // редактирование названия/описания готового видео
 ipcMain.handle("video:meta:set", async (_e, p, patch) => {

@@ -248,35 +248,53 @@ function setJob(cls, text) { const j = $("jobStatus"); j.className = "job " + cl
 
 // готовые видео — карточки
 const esc = (s) => String(s || "").replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+function fmtDate(d) {
+  const today = new Date().toISOString().slice(0, 10);
+  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if (d === today) return "Сегодня";
+  if (d === yest) return "Вчера";
+  try { return new Date(d + "T12:00:00").toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }); } catch { return d; }
+}
+function makeVideoCard(v) {
+  const card = document.createElement("div");
+  card.className = "fv-item";
+  const dur = v.duration ? `${Math.round(v.duration)}с` : "";
+  const title = esc(v.title) || esc(v.name);
+  const preview = v.thumb ? `<img src="${v.thumb}" />` : `<div class="fv-noimg">🎬</div>`;
+  card.innerHTML = `
+    <div class="fv-thumb">
+      ${preview}
+      ${dur ? `<span class="fv-dur">${dur}</span>` : ""}
+      <div class="fv-hover">
+        <button class="fv-edit" title="Название и описание">✎</button>
+        <button class="fv-del" title="Удалить">✕</button>
+      </div>
+    </div>
+    <div class="fv-name" title="${esc(v.description) || title}">${title}</div>`;
+  card.querySelector(".fv-thumb img, .fv-noimg")?.addEventListener("click", () => window.api.revealVideo(v.path));
+  card.querySelector(".fv-del").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm("Удалить это видео?")) return;
+    await window.api.deleteVideo(v.path); refreshLibrary();
+  });
+  card.querySelector(".fv-edit").addEventListener("click", (e) => { e.stopPropagation(); openEditor(v); });
+  return card;
+}
 async function refreshLibrary() {
   const list = await window.api.listVideos();
   const el = $("videoList");
+  el.className = "";
   if (!list.length) { el.innerHTML = '<div class="empty">Пока нет видео. Создай первое на вкладке «Создать видео».</div>'; return; }
+  const groups = {};
+  list.forEach((v) => { (groups[v.date] = groups[v.date] || []).push(v); });
+  const dates = Object.keys(groups).sort().reverse();
   el.innerHTML = "";
-  list.forEach((v) => {
-    const card = document.createElement("div");
-    card.className = "fv-item";
-    const dur = v.duration ? `${Math.round(v.duration)}с` : "";
-    const title = esc(v.title) || esc(v.name);
-    const preview = v.thumb ? `<img src="${v.thumb}" />` : `<div class="fv-noimg">🎬</div>`;
-    card.innerHTML = `
-      <div class="fv-thumb">
-        ${preview}
-        ${dur ? `<span class="fv-dur">${dur}</span>` : ""}
-        <div class="fv-hover">
-          <button class="fv-edit" title="Название и описание">✎</button>
-          <button class="fv-del" title="Удалить">✕</button>
-        </div>
-      </div>
-      <div class="fv-name" title="${esc(v.description) || title}">${title}</div>`;
-    card.querySelector(".fv-thumb img, .fv-noimg")?.addEventListener("click", () => window.api.revealVideo(v.path));
-    card.querySelector(".fv-del").addEventListener("click", async (e) => {
-      e.stopPropagation();
-      if (!confirm("Удалить это видео?")) return;
-      await window.api.deleteVideo(v.path); refreshLibrary();
-    });
-    card.querySelector(".fv-edit").addEventListener("click", (e) => { e.stopPropagation(); openEditor(v); });
-    el.appendChild(card);
+  dates.forEach((d) => {
+    const h = document.createElement("div"); h.className = "date-header"; h.textContent = fmtDate(d) + ` · ${groups[d].length}`;
+    el.appendChild(h);
+    const grid = document.createElement("div"); grid.className = "video-grid";
+    groups[d].forEach((v) => grid.appendChild(makeVideoCard(v)));
+    el.appendChild(grid);
   });
 }
 

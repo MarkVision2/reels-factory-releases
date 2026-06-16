@@ -24,8 +24,12 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
   const P = paths();
   await ensureFolders(P);
   const workDir = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "reel-"));
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const outPath = path.join(P.output, `reel-${stamp}.mp4`);
+  const now = new Date();
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const dateFolder = now.toISOString().slice(0, 10); // ГГГГ-ММ-ДД
+  const outDir = path.join(P.output, dateFolder);
+  await fs.mkdir(outDir, { recursive: true });
+  const outPath = path.join(outDir, `reel-${stamp}.mp4`);
 
   // --- РЕЖИМ АВАТАР (HeyGen) / СВОЁ ВИДЕО — монтаж поверх готового говорящего видео ---
   const isAvatar = videoMode === "avatar" && heygenKey && heygenAvatarId;

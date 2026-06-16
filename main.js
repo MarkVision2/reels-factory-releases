@@ -14,6 +14,9 @@ import { transcribeAudio } from "./src/stt.js";
 const { autoUpdater } = electronUpdater;
 const P = paths();
 
+// фикс белого экрана на части Mac: окно отрисовано, но GPU-композитор не выводит кадр
+app.disableHardwareAcceleration();
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(app.getPath("userData"), "config.json");
 const FONT_PATH = path.join(app.getPath("userData"), "brand-font.ttf");
@@ -24,6 +27,7 @@ const DEFAULT_CONFIG = {
   fontPath: "", fontName: "", accentColor: "#42C8F5",
   voiceStability: 0.35, voiceStyle: 0.55, voiceSimilarity: 0.8,
   activeProject: "", telegramChatId: "",
+  videoMode: "faceless", heygenKey: "", heygenAvatarId: "", heygenVoiceId: "",
 };
 
 let win = null, tray = null, bot = null, botInfo = null;

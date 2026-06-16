@@ -87,6 +87,11 @@
         <span>Проект:</span>
         <select id="projSel"></select>
         <button id="projNew">＋ Новый проект</button>
+        <span style="margin-left:14px">Режим:</span>
+        <select id="videoMode">
+          <option value="faceless">Биролы (faceless)</option>
+          <option value="avatar">Аватар (HeyGen)</option>
+        </select>
       </div>
       <p class="hint">Вставь текст сценария — соберу ролик из контента выбранного проекта. Или напиши/надиктуй боту в Telegram.</p>
       <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
@@ -201,6 +206,15 @@
           <input id="genMax" type="number" min="0" max="6" placeholder="макс клипов" style="width:120px" />
         </div>
         <label style="margin-top:6px"><a href="https://fal.ai/dashboard/keys" target="_blank">создать FAL key</a></label>
+      </div>
+
+      <div class="field gdrive">
+        <label>🧑‍💼 Аватар HeyGen <span class="opt">— для режима «Аватар»</span></label>
+        <p class="sub">Говорящий аватар озвучивает сценарий, сверху — титры и музыка. Выбери режим «Аватар» на вкладке «Создать видео».</p>
+        <input id="heygenKey" type="password" placeholder="HeyGen API key" />
+        <input id="heygenAvatarId" type="text" placeholder="Avatar ID" style="margin-top:8px" />
+        <input id="heygenVoiceId" type="text" placeholder="Voice ID (необязательно — иначе авто рус. голос)" style="margin-top:8px" />
+        <label style="margin-top:6px"><a href="https://app.heygen.com/settings?nav=API" target="_blank">взять API key</a> · <a href="https://app.heygen.com/avatars" target="_blank">ID аватара</a></label>
       </div>
 
       <div class="field">

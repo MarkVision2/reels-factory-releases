@@ -269,3 +269,43 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   await runFfmpeg(args, { label: "faceless", env: fcEnv });
   return { outPath, duration: D, clips: clips.length, captions: hasCaps };
 };
+
+// РЕЖИМ АВАТАР: видео HeyGen (со звуком) → 1080x1920 + титры + фоновая музыка (duck).
+export const renderAvatar = async ({ workDir, avatarPath, words = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, outPath }) => {
+  const D = await ffprobeDuration(avatarPath);
+  const font = await loadFont(workDir, fontPath);
+  const assPath = path.join(workDir, "cap.ass");
+  let hasCaps = false;
+  let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
+  if (font && words.length) {
+    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor }));
+    const fontDir = path.dirname(font.path);
+    const fontsConf = path.join(workDir, "fonts.conf");
+    await fs.writeFile(fontsConf, `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n<dir>${fontDir}</dir>\n<cachedir>${path.join(workDir, "fc-cache")}</cachedir>\n</fontconfig>\n`);
+    fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir, FONTCONFIG_FILE: fontsConf, FONTCONFIG_PATH: fontDir };
+    hasCaps = true;
+  }
+  const args = ["-y", "-i", avatarPath];
+  let musicIdx = -1;
+  if (musicPath) { args.push("-stream_loop", "-1", "-i", musicPath); musicIdx = 1; }
+  const filter = [];
+  filter.push(`[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1[v0]`);
+  let vlabel = "v0";
+  if (hasCaps) {
+    const escAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+    filter.push(`[v0]ass='${escAss}'[vout]`); vlabel = "vout";
+  }
+  if (musicIdx >= 0) {
+    filter.push(`[0:a]aresample=44100,asplit=2[va][vsc]`);
+    filter.push(`[${musicIdx}:a]aresample=44100,volume=${musicVolume}[mraw]`);
+    filter.push(`[mraw][vsc]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300[mduck]`);
+    filter.push(`[va][mduck]amix=inputs=2:normalize=0:dropout_transition=0,alimiter=limit=0.95[aout]`);
+  } else {
+    filter.push(`[0:a]aresample=44100[aout]`);
+  }
+  args.push("-filter_complex", filter.join(";"), "-map", `[${vlabel}]`, "-map", "[aout]");
+  args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart", "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-t", String(D), outPath);
+  await runFfmpeg(args, { label: "avatar", env: fcEnv });
+  return { outPath, duration: D, clips: 1, captions: hasCaps };
+};

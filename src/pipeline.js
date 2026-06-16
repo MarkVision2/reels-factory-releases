@@ -4,8 +4,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { synthesize } from "./tts.js";
 import { buildSegments } from "./match.js";
-import { renderFaceless, downloadTo } from "./render-core.js";
+import { renderFaceless, renderAvatar, downloadTo } from "./render-core.js";
 import { paths, ensureFolders, buildLocalCatalog, pickMusic, listSounds } from "./local-content.js";
+import { generateAvatarVideo } from "./heygen.js";
+import { transcribeWithWords } from "./stt.js";
 
 export const generateVideo = async ({ script, config = {}, onProgress = () => {} }) => {
   const {
@@ -15,6 +17,7 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
     musicUrl = null, musicVolume = 0.05,
     genProvider = "none", falKey = "", falModel = "kling", genMax = 2,
     fontPath = null, accentColor = null, activeProject = "",
+    videoMode = "faceless", heygenKey = "", heygenAvatarId = "", heygenVoiceId = "",
   } = config;
   const gen = (genProvider === "fal" && falKey) ? { provider: "fal", key: falKey, model: falModel, max: Number(genMax) || 2 } : null;
 
@@ -23,6 +26,28 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
   const workDir = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "reel-"));
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outPath = path.join(P.output, `reel-${stamp}.mp4`);
+
+  // --- РЕЖИМ АВАТАР (HeyGen) ---
+  if (videoMode === "avatar" && heygenKey && heygenAvatarId) {
+    try {
+      const url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, voiceId: heygenVoiceId, text: script, onProgress });
+      onProgress({ step: "download", label: "Скачиваю аватара…" });
+      const avatarPath = path.join(workDir, "avatar.mp4");
+      await downloadTo(url, avatarPath);
+      onProgress({ step: "captions", label: "Делаю титры…" });
+      let words = [];
+      try { const buf = await fs.readFile(avatarPath); words = (await transcribeWithWords({ audioBuffer: buf, apiKey: elevenKey })).words; } catch {}
+      const musicPath = await pickMusic(P, activeProject);
+      onProgress({ step: "render", label: "Монтирую видео…" });
+      const r = await renderAvatar({ workDir, avatarPath, words, musicPath, musicVolume, fontPath, accentColor, outPath });
+      const title = script.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Аватар";
+      await fs.writeFile(outPath.replace(/\.mp4$/, ".json"), JSON.stringify({ title, script, created: new Date().toISOString(), duration: r.duration, mode: "avatar" }, null, 2)).catch(() => {});
+      onProgress({ step: "done", label: "Готово", outPath });
+      return { ...r, outPath };
+    } finally {
+      fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 
   try {
     onProgress({ step: "tts", label: "Озвучиваю сценарий…" });

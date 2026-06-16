@@ -1,6 +1,6 @@
 // Логика окна: вкладки, настройка, создание видео, статус бота.
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["telegramToken", "elevenKey", "voiceId", "openaiKey", "pexelsKey", "genProvider", "falKey", "falModel", "genMax", "musicUrl", "accentColor"];
+const FIELDS = ["telegramToken", "elevenKey", "voiceId", "openaiKey", "pexelsKey", "genProvider", "falKey", "falModel", "genMax", "musicUrl", "accentColor", "heygenKey", "heygenAvatarId", "heygenVoiceId"];
 
 // вкладки
 document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -201,6 +201,11 @@ async function refreshProjects() {
 }
 refreshProjects();
 $("projSel").addEventListener("change", () => window.api.setActiveProject($("projSel").value));
+// режим видео (faceless / avatar) — сохраняем сразу
+window.api.getConfig().then((c) => { $("videoMode").value = c.videoMode || "faceless"; });
+$("videoMode").addEventListener("change", async () => {
+  const cfg = await window.api.getConfig(); cfg.videoMode = $("videoMode").value; await window.api.saveConfig(cfg);
+});
 $("projNew").addEventListener("click", async () => {
   const name = prompt("Название нового проекта:");
   if (!name) return;

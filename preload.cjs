@@ -23,4 +23,5 @@ contextBridge.exposeInMainWorld("api", {
   clearFont: () => ipcRenderer.invoke("brand:clearFont"),
   installUpdate: () => ipcRenderer.invoke("update:install"),
   on: (channel, cb) => ipcRenderer.on(channel, (_e, payload) => cb(payload)),
+  platform: process.platform,
 });

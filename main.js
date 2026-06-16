@@ -135,7 +135,14 @@ const setupAutoUpdate = () => {
 process.on("unhandledRejection", () => {});
 
 // --- IPC ---
-ipcMain.handle("update:install", () => { app.isQuitting = true; autoUpdater.quitAndInstall(); });
+ipcMain.handle("update:install", () => {
+  // На Mac без подписи Apple авто-установка не работает → открываем страницу загрузки нового .dmg.
+  if (process.platform === "darwin") {
+    shell.openExternal("https://github.com/MarkVision2/reels-factory-releases/releases/latest");
+    return;
+  }
+  app.isQuitting = true; autoUpdater.quitAndInstall();
+});
 ipcMain.handle("config:get", async () => loadConfig());
 ipcMain.handle("config:save", async (_e, cfg) => { await saveConfig(cfg); restartBot().catch(() => {}); return true; }); // бот стартует в фоне — не подвешиваем окно
 ipcMain.handle("telegram:validate", async (_e, token) => {

@@ -270,8 +270,9 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   return { outPath, duration: D, clips: clips.length, captions: hasCaps };
 };
 
-// РЕЖИМ АВАТАР: видео HeyGen (со звуком) → 1080x1920 + титры + фоновая музыка (duck).
-export const renderAvatar = async ({ workDir, avatarPath, words = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, outPath }) => {
+// РЕЖИМ АВАТАР: видео HeyGen (со звуком) → 1080x1920 + биролы-перебивки + титры + музыка (duck).
+// inserts: [{start,end,path}] — клипы, накладываются поверх аватара в свои окна (звук аватара не трогаем).
+export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, outPath }) => {
   const D = await ffprobeDuration(avatarPath);
   const font = await loadFont(workDir, fontPath);
   const assPath = path.join(workDir, "cap.ass");
@@ -285,15 +286,28 @@ export const renderAvatar = async ({ workDir, avatarPath, words = [], musicPath 
     fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir, FONTCONFIG_FILE: fontsConf, FONTCONFIG_PATH: fontDir };
     hasCaps = true;
   }
+  const ins = (inserts || []).filter((i) => i.path && Number(i.end) > Number(i.start));
   const args = ["-y", "-i", avatarPath];
+  ins.forEach((i) => args.push("-stream_loop", "-1", "-i", i.path));
   let musicIdx = -1;
-  if (musicPath) { args.push("-stream_loop", "-1", "-i", musicPath); musicIdx = 1; }
+  if (musicPath) { args.push("-stream_loop", "-1", "-i", musicPath); musicIdx = 1 + ins.length; }
+
   const filter = [];
-  filter.push(`[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1[v0]`);
-  let vlabel = "v0";
+  filter.push(`[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1[base]`);
+  // биролы-перебивки: каждый клип поверх аватара в своё окно времени
+  let prev = "base";
+  ins.forEach((s, k) => {
+    const idx = k + 1; const st = Number(s.start), en = Number(s.end);
+    filter.push(`[${idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1,trim=0:${(en - st + 0.2).toFixed(2)},setpts=PTS-STARTPTS+${st.toFixed(2)}/TB[ov${k}]`);
+    const out = `ovr${k}`;
+    filter.push(`[${prev}][ov${k}]overlay=enable='between(t,${st.toFixed(2)},${en.toFixed(2)})':eof_action=pass[${out}]`);
+    prev = out;
+  });
+  filter.push(`[${prev}]eq=contrast=1.02:saturation=1.05[vbase]`);
+  let vlabel = "vbase";
   if (hasCaps) {
     const escAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
-    filter.push(`[v0]ass='${escAss}'[vout]`); vlabel = "vout";
+    filter.push(`[vbase]ass='${escAss}'[vout]`); vlabel = "vout";
   }
   if (musicIdx >= 0) {
     filter.push(`[0:a]aresample=44100,asplit=2[va][vsc]`);

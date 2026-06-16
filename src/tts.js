@@ -20,7 +20,7 @@ const wordsFromAlignment = (al) => {
 };
 
 // слова -> блоки (смысловые сегменты ~6.5с / по концу предложения)
-const blocksFromWords = (words) => {
+export const blocksFromWords = (words) => {
   const ends = (t) => /[.!?:]$/.test(t);
   const blocks = []; let s = null;
   for (const w of words) {

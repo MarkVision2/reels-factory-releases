@@ -2,7 +2,7 @@
 //   текст -> озвучка -> блоки -> подбор (локальные клипы + Pexels) -> ffmpeg -> mp4 в «Готовые видео».
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { synthesize } from "./tts.js";
+import { synthesize, blocksFromWords } from "./tts.js";
 import { buildSegments } from "./match.js";
 import { renderFaceless, renderAvatar, downloadTo } from "./render-core.js";
 import { paths, ensureFolders, buildLocalCatalog, pickMusic, listSounds } from "./local-content.js";
@@ -37,9 +37,26 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
       onProgress({ step: "captions", label: "Делаю титры…" });
       let words = [];
       try { const buf = await fs.readFile(avatarPath); words = (await transcribeWithWords({ audioBuffer: buf, apiKey: elevenKey })).words; } catch {}
+      // биролы-перебивки: каждый 2-й смысловой блок перекрываем клипом
+      const inserts = [];
+      try {
+        const blocks = blocksFromWords(words);
+        const vdur = words.length ? words[words.length - 1].t + words[words.length - 1].d : 0;
+        const insBlocks = blocks.filter((b, i) => i > 0 && i % 2 === 1).slice(0, 4);
+        if (insBlocks.length) {
+          onProgress({ step: "broll", label: "Подбираю перебивки…" });
+          const catalog = await buildLocalCatalog({ p: P, project: activeProject, openaiKey }).catch(() => []);
+          const segs = await buildSegments({ blocks: insBlocks, vdur, catalog, openaiKey, pexelsKey, gen });
+          for (const s of segs) {
+            let cp = s.clip_path;
+            if (!cp && s.clip_url) { cp = path.join(workDir, `ins${inserts.length}.mp4`); try { await downloadTo(s.clip_url, cp); } catch { cp = null; } }
+            if (cp) inserts.push({ start: s.start, end: s.end, path: cp });
+          }
+        }
+      } catch {}
       const musicPath = await pickMusic(P, activeProject);
       onProgress({ step: "render", label: "Монтирую видео…" });
-      const r = await renderAvatar({ workDir, avatarPath, words, musicPath, musicVolume, fontPath, accentColor, outPath });
+      const r = await renderAvatar({ workDir, avatarPath, words, inserts, musicPath, musicVolume, fontPath, accentColor, outPath });
       const title = script.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Аватар";
       await fs.writeFile(outPath.replace(/\.mp4$/, ".json"), JSON.stringify({ title, script, created: new Date().toISOString(), duration: r.duration, mode: "avatar" }, null, 2)).catch(() => {});
       onProgress({ step: "done", label: "Готово", outPath });

@@ -291,7 +291,11 @@ window.api.on("update:status", (s) => {
   banner.hidden = false; btn.hidden = true;
   if (s.state === "available") text.textContent = `Загружаю обновление v${s.version}…`;
   else if (s.state === "downloading") text.textContent = `Загружаю обновление… ${s.percent}%`;
-  else if (s.state === "ready") { text.textContent = `Обновление v${s.version} готово.`; btn.hidden = false; }
+  else if (s.state === "ready") {
+    text.textContent = `Доступно обновление v${s.version}.`;
+    btn.hidden = false;
+    btn.textContent = window.api.platform === "darwin" ? "Скачать обновление" : "Перезапустить и обновить";
+  }
   else if (s.state === "error") { banner.hidden = true; }
 });
 $("updateBtn").addEventListener("click", () => window.api.installUpdate());

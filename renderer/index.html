@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Reels Factory</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">🎬 Reels Factory</div>
+    <nav>
+      <button class="nav-btn active" data-tab="create">✏️ Создать видео</button>
+      <button class="nav-btn" data-tab="library">📁 Мои видео</button>
+      <button class="nav-btn" data-tab="setup">⚙️ Настройка</button>
+    </nav>
+    <div class="bot-status" id="botStatus">Бот: проверяю…</div>
+  </aside>
+
+  <!-- ВИЗАРД ПЕРВОГО ЗАПУСКА -->
+  <div class="wizard" id="wizard" hidden>
+    <div class="wiz-card">
+      <div class="wiz-steps">
+        <span class="dot active" data-s="1"></span>
+        <span class="dot" data-s="2"></span>
+        <span class="dot" data-s="3"></span>
+      </div>
+
+      <div class="wiz-step active" data-step="1">
+        <h2>Шаг 1 — Подключи Telegram-бота</h2>
+        <p>Создай бота у <a href="https://t.me/BotFather" target="_blank">@BotFather</a> (команда /newbot), скопируй токен и вставь сюда.</p>
+        <input id="wTelegram" type="text" placeholder="123456:ABC-..." />
+        <button id="wCheckTg" class="ghost">Проверить</button>
+        <span class="badge" id="wTgBadge"></span>
+      </div>
+
+      <div class="wiz-step" data-step="2">
+        <h2>Шаг 2 — Ключ озвучки (ElevenLabs)</h2>
+        <p>Без него не будет голоса. Возьми ключ в <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">настройках ElevenLabs</a>.</p>
+        <input id="wEleven" type="password" placeholder="xi-api-key…" />
+      </div>
+
+      <div class="wiz-step" data-step="3">
+        <h2>Готово 🎉</h2>
+        <p>Базовая настройка завершена — можно создавать видео.<br/>Сток Pexels, свои клипы из Google Drive и ИИ-генерацию (Kling/Veo) можно добавить позже во вкладке <b>Настройка</b>.</p>
+      </div>
+
+      <div class="wiz-nav">
+        <button id="wBack" class="ghost" hidden>Назад</button>
+        <button id="wNext" class="primary">Дальше</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="update-banner" id="updateBanner" hidden>
+    <span id="updateText"></span>
+    <button id="updateBtn" hidden>Перезапустить и обновить</button>
+  </div>
+
+  <main class="content">
+    <!-- СОЗДАТЬ -->
+    <section class="tab active" id="tab-create">
+      <h1>Создать видео из сценария</h1>
+      <p class="hint">Вставь текст сценария — соберу ролик с озвучкой, титрами и музыкой. Или просто напиши сценарий своему Telegram-боту.</p>
+      <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
+      <div class="row">
+        <button class="primary" id="createBtn">Создать видео</button>
+        <div class="job" id="jobStatus"></div>
+      </div>
+    </section>
+
+    <!-- БИБЛИОТЕКА -->
+    <section class="tab" id="tab-library">
+      <h1>Мои видео</h1>
+      <div id="videoList" class="video-list"></div>
+    </section>
+
+    <!-- НАСТРОЙКА -->
+    <section class="tab" id="tab-setup">
+      <h1>Настройка</h1>
+      <p class="hint">Заполни один раз. Каждый ключ — со ссылкой «где взять».</p>
+
+      <div class="field">
+        <label>Токен Telegram-бота <a href="https://t.me/BotFather" target="_blank">@BotFather → /newbot</a></label>
+        <div class="inline">
+          <input id="telegramToken" type="text" placeholder="123456:ABC-..." />
+          <button id="checkTg">Проверить</button>
+          <span class="badge" id="tgBadge"></span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Ключ ElevenLabs (озвучка) <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">где взять</a></label>
+        <input id="elevenKey" type="password" placeholder="xi-api-key…" />
+      </div>
+      <div class="field">
+        <label>Voice ID (голос ElevenLabs)</label>
+        <input id="voiceId" type="text" placeholder="IKne3meq5aSn9XLyUdCD" />
+      </div>
+
+      <div class="field">
+        <label>Ключ OpenAI (умный подбор кадров) <a href="https://platform.openai.com/api-keys" target="_blank">где взять</a> <span class="opt">— необязательно</span></label>
+        <input id="openaiKey" type="password" placeholder="sk-…" />
+      </div>
+      <div class="field">
+        <label>Ключ Pexels (сток-видео) <a href="https://www.pexels.com/api/" target="_blank">где взять</a> <span class="opt">— необязательно</span></label>
+        <input id="pexelsKey" type="password" placeholder="Pexels API key…" />
+      </div>
+
+      <div class="field gdrive">
+        <label>📁 Google Drive — папка со своими клипами</label>
+        <p class="sub">Сделай папку в Google Drive «Доступ по ссылке» и вставь ссылку. Приложение само скачает клипы и соберёт каталог.</p>
+        <input id="driveFolderUrl" type="text" placeholder="https://drive.google.com/drive/folders/…" />
+        <input id="googleApiKey" type="password" placeholder="Google API key (Drive API) — где взять ниже" style="margin-top:8px" />
+        <label style="margin-top:6px"><a href="https://console.cloud.google.com/apis/credentials" target="_blank">создать Google API key</a> (включить Google Drive API)</label>
+        <div class="inline" style="margin-top:10px">
+          <button id="buildCatBtn">Собрать каталог</button>
+          <span class="badge" id="catBadge"></span>
+        </div>
+        <div class="catprog" id="catProg"></div>
+      </div>
+
+      <div class="field">
+        <label>Каталог по URL (если без Drive) <span class="opt">— необязательно</span></label>
+        <input id="catalogUrl" type="text" placeholder="https://…/catalog.json" />
+      </div>
+      <div class="field gdrive">
+        <label>🤖 ИИ-генерация биролов <span class="opt">— необязательно</span></label>
+        <p class="sub">Помимо стока Pexels — генерировать уникальные кадры моделями Kling / Veo / Runway через FAL.ai (один ключ — все модели). Платно за клип, поэтому есть лимит на ролик.</p>
+        <select id="genProvider">
+          <option value="none">Выключено (только сток/каталог)</option>
+          <option value="fal">FAL.ai (Kling / Veo / Runway)</option>
+        </select>
+        <input id="falKey" type="password" placeholder="FAL API key" style="margin-top:8px" />
+        <div class="inline" style="margin-top:8px">
+          <select id="falModel">
+            <option value="kling">Kling (быстро, дёшево)</option>
+            <option value="kling-pro">Kling Pro (качество)</option>
+            <option value="veo">Veo</option>
+            <option value="runway">Runway</option>
+          </select>
+          <input id="genMax" type="number" min="0" max="6" placeholder="макс клипов" style="width:120px" />
+        </div>
+        <label style="margin-top:6px"><a href="https://fal.ai/dashboard/keys" target="_blank">создать FAL key</a></label>
+      </div>
+
+      <div class="field">
+        <label>Музыка (URL mp3) <span class="opt">— необязательно</span></label>
+        <input id="musicUrl" type="text" placeholder="https://…/track.mp3" />
+      </div>
+
+      <button class="primary" id="saveBtn">Сохранить</button>
+      <span class="badge" id="saveBadge"></span>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

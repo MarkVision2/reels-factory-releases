@@ -14,8 +14,11 @@ import { transcribeAudio } from "./src/stt.js";
 const { autoUpdater } = electronUpdater;
 const P = paths();
 
-// фикс белого экрана на части Mac: окно отрисовано, но GPU-композитор не выводит кадр
+// фикс белого экрана на части Mac: окно отрисовано, но GPU-композитор не выводит кадр.
+// Полное отключение GPU = софтверный рендер (надёжно показывает окно).
 app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(app.getPath("userData"), "config.json");
@@ -30,7 +33,7 @@ const DEFAULT_CONFIG = {
   videoMode: "faceless", heygenKey: "", heygenAvatarId: "", heygenVoiceId: "",
 };
 
-let win = null, tray = null, bot = null, botInfo = null;
+let win = null, tray = null, bot = null, botInfo = null, latestVersion = null;
 
 const loadConfig = async () => {
   try { return { ...DEFAULT_CONFIG, ...JSON.parse(await fs.readFile(CONFIG_PATH, "utf8")) }; }
@@ -90,8 +93,11 @@ const createWindow = () => {
   win = new BrowserWindow({
     width: 980, height: 720, minWidth: 820, minHeight: 600,
     title: "AI Reels Factory",
+    backgroundColor: "#0f1116",
+    show: false,
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
+  win.once("ready-to-show", () => win.show());
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
   win.webContents.on("unresponsive", () => console.log("[ОКНО ЗАВИСЛО]"));
@@ -123,7 +129,7 @@ const setupAutoUpdate = () => {
   if (!app.isPackaged) return; // в dev (npm start) не проверяем
   autoUpdater.autoDownload = true;           // качаем обновление в фоне, ставим по кнопке
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on("update-available", (i) => toRenderer("update:status", { state: "available", version: i?.version }));
+  autoUpdater.on("update-available", (i) => { latestVersion = i?.version; toRenderer("update:status", { state: "available", version: i?.version }); });
   autoUpdater.on("download-progress", (p) => toRenderer("update:status", { state: "downloading", percent: Math.round(p.percent || 0) }));
   autoUpdater.on("update-downloaded", (i) => toRenderer("update:status", { state: "ready", version: i?.version }));
   autoUpdater.on("error", () => {});         // тихо игнорируем (нет подписи/нет zip и т.п.)
@@ -135,10 +141,22 @@ const setupAutoUpdate = () => {
 process.on("unhandledRejection", () => {});
 
 // --- IPC ---
-ipcMain.handle("update:install", () => {
-  // На Mac без подписи Apple авто-установка не работает → открываем страницу загрузки нового .dmg.
+ipcMain.handle("update:install", async () => {
+  // На Mac без подписи Apple авто-установка не работает → сами качаем dmg и открываем (юзер перетащит).
   if (process.platform === "darwin") {
-    shell.openExternal("https://github.com/MarkVision2/reels-factory-releases/releases/latest");
+    const v = latestVersion;
+    const page = "https://github.com/MarkVision2/reels-factory-releases/releases/latest";
+    if (!v) { shell.openExternal(page); return; }
+    const url = `https://github.com/MarkVision2/reels-factory-releases/releases/download/v${v}/AI-Reels-Factory-${v}-arm64.dmg`;
+    const dest = path.join(app.getPath("downloads"), `AI Reels Factory ${v}.dmg`);
+    toRenderer("update:status", { state: "downloading", percent: 0 });
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("dl");
+      await fs.writeFile(dest, Buffer.from(await res.arrayBuffer()));
+      toRenderer("update:status", { state: "ready", version: v });
+      shell.openPath(dest); // монтирует dmg — юзер перетаскивает приложение в Программы
+    } catch { shell.openExternal(page); }
     return;
   }
   app.isQuitting = true; autoUpdater.quitAndInstall();

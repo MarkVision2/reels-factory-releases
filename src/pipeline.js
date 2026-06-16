@@ -33,6 +33,10 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
       ? catalog
       : (catalogUrl ? await loadCatalog(catalogUrl).catch(() => []) : []);
     const segments = await buildSegments({ blocks, vdur, catalog: cat, openaiKey, pexelsKey, gen, onProgress });
+    // понятная ошибка вместо краша, если кадры брать неоткуда
+    if (!segments.some((s) => s.clip_path || s.clip_url)) {
+      throw new Error("Нет источников кадров. Добавь в «Настройке» ключ Pexels, папку Google Drive или ИИ-генерацию.");
+    }
 
     let musicPath = null;
     if (musicUrl) {

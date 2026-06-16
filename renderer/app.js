@@ -29,7 +29,7 @@ function showWizStep(n) {
   document.querySelectorAll(".wiz-step").forEach((s) => s.classList.toggle("active", +s.dataset.step === n));
   document.querySelectorAll(".wiz-steps .dot").forEach((d) => d.classList.toggle("active", +d.dataset.s <= n));
   $("wBack").hidden = n === 1;
-  $("wNext").textContent = n === 3 ? "Открыть приложение" : "Дальше";
+  $("wNext").textContent = n === 4 ? "Открыть приложение" : "Дальше";
 }
 function startWizard() { $("wizard").hidden = false; showWizStep(1); }
 
@@ -47,13 +47,16 @@ $("wNext").addEventListener("click", async () => {
   } else if (wizStep === 2) {
     if (!$("wEleven").value.trim()) { return; }
     showWizStep(3);
+  } else if (wizStep === 3) {
+    showWizStep(4);
   } else {
     // сохранить и закрыть
     const cfg = await window.api.getConfig();
     cfg.telegramToken = $("wTelegram").value.trim();
     cfg.elevenKey = $("wEleven").value.trim();
+    cfg.pexelsKey = $("wPexels").value.trim();
     await window.api.saveConfig(cfg);
-    $("telegramToken").value = cfg.telegramToken; $("elevenKey").value = cfg.elevenKey;
+    $("telegramToken").value = cfg.telegramToken; $("elevenKey").value = cfg.elevenKey; $("pexelsKey").value = cfg.pexelsKey;
     $("wizard").hidden = true;
   }
 });

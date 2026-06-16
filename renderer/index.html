@@ -89,14 +89,17 @@
         <button id="projNew">＋ Новый проект</button>
         <span style="margin-left:14px">Режим:</span>
         <select id="videoMode">
-          <option value="faceless">Биролы (faceless)</option>
-          <option value="avatar">Аватар (HeyGen)</option>
+          <option value="faceless">🎙️ С озвучкой (биролы)</option>
+          <option value="avatar">🧑‍💼 Аватар HeyGen</option>
+          <option value="ownvideo">🎥 Своё видео</option>
         </select>
       </div>
       <p class="hint">Вставь текст сценария — соберу ролик из контента выбранного проекта. Или напиши/надиктуй боту в Telegram.</p>
       <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
+      <div id="ownHint" class="hint" hidden>Режим «Своё видео»: выбери готовый ролик (например, ты говоришь в камеру) — система распознает речь, добавит титры, музыку и биролы-перебивки.</div>
       <div class="row">
         <button class="primary" id="createBtn">Создать видео</button>
+        <button class="primary" id="createOwnBtn" hidden>Выбрать видео и смонтировать</button>
         <div class="job" id="jobStatus"></div>
       </div>
     </section>

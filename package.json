@@ -1,6 +1,6 @@
 {
   "name": "reels-factory-desktop",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "AI Reels Factory — настольное приложение (ТЗ → видео с озвучкой), полностью локальный рендер",
   "author": "MarkVision",
   "main": "main.js",

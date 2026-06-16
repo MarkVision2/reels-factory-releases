@@ -202,9 +202,27 @@ async function refreshProjects() {
 refreshProjects();
 $("projSel").addEventListener("change", () => window.api.setActiveProject($("projSel").value));
 // режим видео (faceless / avatar) — сохраняем сразу
-window.api.getConfig().then((c) => { $("videoMode").value = c.videoMode || "faceless"; });
+function applyMode(m) {
+  const own = m === "ownvideo";
+  $("scriptInput").hidden = own;
+  $("ownHint").hidden = !own;
+  $("createBtn").hidden = own;
+  $("createOwnBtn").hidden = !own;
+}
+window.api.getConfig().then((c) => { $("videoMode").value = c.videoMode || "faceless"; applyMode(c.videoMode || "faceless"); });
 $("videoMode").addEventListener("change", async () => {
-  const cfg = await window.api.getConfig(); cfg.videoMode = $("videoMode").value; await window.api.saveConfig(cfg);
+  const m = $("videoMode").value;
+  applyMode(m);
+  const cfg = await window.api.getConfig(); cfg.videoMode = m; await window.api.saveConfig(cfg);
+});
+$("createOwnBtn").addEventListener("click", async () => {
+  setJob("busy", "Выбери видео…");
+  $("createOwnBtn").disabled = true;
+  const r = await window.api.createOwnVideo();
+  $("createOwnBtn").disabled = false;
+  if (r.canceled) { setJob("", ""); return; }
+  if (r.ok) setJob("ok", "✅ Готово — во вкладке «Готовые видео»" + (r.sentToTg ? " + Telegram" : ""));
+  else setJob("err", "❌ " + r.error);
 });
 $("projNew").addEventListener("click", async () => {
   const name = prompt("Название нового проекта:");

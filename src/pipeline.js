@@ -27,14 +27,21 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outPath = path.join(P.output, `reel-${stamp}.mp4`);
 
-  // --- РЕЖИМ АВАТАР (HeyGen) ---
-  if (videoMode === "avatar" && heygenKey && heygenAvatarId) {
+  // --- РЕЖИМ АВАТАР (HeyGen) / СВОЁ ВИДЕО — монтаж поверх готового говорящего видео ---
+  const isAvatar = videoMode === "avatar" && heygenKey && heygenAvatarId;
+  const isOwnVideo = videoMode === "ownvideo" && config.sourceVideo;
+  if (isAvatar || isOwnVideo) {
     try {
-      const url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, voiceId: heygenVoiceId, text: script, onProgress });
-      onProgress({ step: "download", label: "Скачиваю аватара…" });
-      const avatarPath = path.join(workDir, "avatar.mp4");
-      await downloadTo(url, avatarPath);
-      onProgress({ step: "captions", label: "Делаю титры…" });
+      let avatarPath;
+      if (isAvatar) {
+        const url = await generateAvatarVideo({ apiKey: heygenKey, avatarId: heygenAvatarId, voiceId: heygenVoiceId, text: script, onProgress });
+        onProgress({ step: "download", label: "Скачиваю аватара…" });
+        avatarPath = path.join(workDir, "avatar.mp4");
+        await downloadTo(url, avatarPath);
+      } else {
+        avatarPath = config.sourceVideo; // твоё загруженное видео
+      }
+      onProgress({ step: "captions", label: "Распознаю речь и делаю титры…" });
       let words = [];
       try { const buf = await fs.readFile(avatarPath); words = (await transcribeWithWords({ audioBuffer: buf, apiKey: elevenKey })).words; } catch {}
       // биролы-перебивки: каждый 2-й смысловой блок перекрываем клипом
@@ -57,8 +64,9 @@ export const generateVideo = async ({ script, config = {}, onProgress = () => {}
       const musicPath = await pickMusic(P, activeProject);
       onProgress({ step: "render", label: "Монтирую видео…" });
       const r = await renderAvatar({ workDir, avatarPath, words, inserts, musicPath, musicVolume, fontPath, accentColor, outPath });
-      const title = script.split("\n").map((s) => s.trim()).filter(Boolean)[0] || "Аватар";
-      await fs.writeFile(outPath.replace(/\.mp4$/, ".json"), JSON.stringify({ title, script, created: new Date().toISOString(), duration: r.duration, mode: "avatar" }, null, 2)).catch(() => {});
+      const transcript = words.map((w) => w.w).join(" ");
+      const title = (script || transcript).split("\n").map((s) => s.trim()).filter(Boolean)[0]?.slice(0, 60) || (isAvatar ? "Аватар" : "Своё видео");
+      await fs.writeFile(outPath.replace(/\.mp4$/, ".json"), JSON.stringify({ title, script: script || transcript, created: new Date().toISOString(), duration: r.duration, mode: videoMode }, null, 2)).catch(() => {});
       onProgress({ step: "done", label: "Готово", outPath });
       return { ...r, outPath };
     } finally {

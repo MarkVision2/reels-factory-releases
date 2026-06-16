@@ -162,6 +162,19 @@ ipcMain.handle("video:create", async (_e, script) => {
     return { ok: true, outPath: r.outPath, sentToTg: !!(cfg.telegramToken && cfg.telegramChatId) };
   } catch (e) { toRenderer("job:error", { error: e.message }); return { ok: false, error: e.message }; }
 });
+// режим «своё видео»: выбрать готовый файл → титры+музыка+перебивки
+ipcMain.handle("video:createOwn", async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Видео", extensions: ["mp4", "mov", "m4v", "webm", "mkv"] }] });
+  if (r.canceled || !r.filePaths[0]) return { ok: true, canceled: true };
+  toRenderer("job:start", { source: "app", text: "своё видео: " + r.filePaths[0].split("/").pop() });
+  try {
+    const cfg = await loadConfig();
+    const rr = await generateVideo({ script: "", config: { ...cfg, videoMode: "ownvideo", sourceVideo: r.filePaths[0] }, onProgress: (p) => toRenderer("job:progress", p) });
+    if (cfg.telegramToken && cfg.telegramChatId) sendDocument(cfg.telegramToken, cfg.telegramChatId, rr.outPath, "Готово ✅").catch(() => {});
+    toRenderer("job:done", { outPath: rr.outPath, source: "app" });
+    return { ok: true, outPath: rr.outPath, sentToTg: !!(cfg.telegramToken && cfg.telegramChatId) };
+  } catch (e) { toRenderer("job:error", { error: e.message }); return { ok: false, error: e.message }; }
+});
 ipcMain.handle("video:reveal", async (_e, p) => { shell.showItemInFolder(p); });
 ipcMain.handle("video:delete", async (_e, p) => {
   try { await fs.rm(p, { force: true }); await fs.rm(p.replace(/\.mp4$/, ".json"), { force: true }); return { ok: true }; }

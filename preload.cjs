@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("api", {
   saveConfig: (cfg) => ipcRenderer.invoke("config:save", cfg),
   validateTelegram: (token) => ipcRenderer.invoke("telegram:validate", token),
   createVideo: (script) => ipcRenderer.invoke("video:create", script),
+  createOwnVideo: () => ipcRenderer.invoke("video:createOwn"),
   listVideos: () => ipcRenderer.invoke("video:list"),
   revealVideo: (p) => ipcRenderer.invoke("video:reveal", p),
   deleteVideo: (p) => ipcRenderer.invoke("video:delete", p),

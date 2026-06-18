@@ -13,6 +13,7 @@
       <button class="nav-btn active" data-tab="create">✏️ Создать видео</button>
       <button class="nav-btn" data-tab="library">🎬 Готовые видео</button>
       <button class="nav-btn" data-tab="content">📦 Мой контент</button>
+      <button class="nav-btn" data-tab="style">🎨 Стиль по референсу</button>
       <button class="nav-btn" data-tab="setup">⚙️ Настройка</button>
     </nav>
     <div class="bot-status" id="botStatus">Бот: проверяю…</div>
@@ -97,6 +98,22 @@
       <p class="hint">Вставь текст сценария — соберу ролик из контента выбранного проекта. Или напиши/надиктуй боту в Telegram.</p>
       <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
       <div id="ownHint" class="hint" hidden>Режим «Своё видео»: выбери готовый ролик (например, ты говоришь в камеру) — система распознает речь, добавит титры, музыку и биролы-перебивки.</div>
+
+      <!-- СВОЯ ОЗВУЧКА (только режим «С озвучкой») -->
+      <div id="voiceOwnBox" class="voice-own">
+        <span class="vo-label">🎤 Своя озвучка <span class="opt">(необязательно — иначе озвучу голосом ИИ)</span></span>
+        <div class="vo-controls">
+          <button class="ghost vo-btn" id="voUpload">📁 Загрузить аудио</button>
+          <button class="ghost vo-btn" id="voRecord">⏺ Записать</button>
+          <span class="vo-timer" id="voTimer" hidden>0:00</span>
+          <span class="vo-status" id="voStatus"></span>
+          <button class="vo-clear" id="voClear" hidden>✕ убрать</button>
+        </div>
+        <audio id="voPlayer" class="vo-player" controls hidden></audio>
+        <label class="vo-enhance"><input type="checkbox" id="voEnhance" checked /> ✨ Студийный звук — убрать шум и выровнять громкость</label>
+        <input type="file" id="voFile" accept="audio/*" hidden />
+      </div>
+
       <div class="row">
         <button class="primary" id="createBtn">Создать видео</button>
         <button class="primary" id="createOwnBtn" hidden>Выбрать видео и смонтировать</button>
@@ -126,107 +143,206 @@
       <div id="cbView" class="cb-view"></div>
     </section>
 
+    <!-- СТИЛЬ ПО РЕФЕРЕНСУ -->
+    <section class="tab" id="tab-style">
+      <h1>Стиль по референсу</h1>
+      <p class="hint">Загрузи видео, монтаж которого тебе нравится — система разберёт его (титры, ритм, переходы, темы биролов) и сделает <b>шаблон стиля</b>. Дальше применяй шаблон к своим роликам.<br/><span class="opt">Для разбора стиля нужен ключ OpenAI в «Настройке» (без него — только ритм монтажа). Точный шрифт по видео определить нельзя — подбираем близкий стиль; свой шрифт грузи в брендбуке.</span></p>
+
+      <div class="row">
+        <button class="primary" id="refBtn">📹 Загрузить видео-референс</button>
+        <div class="job" id="refStatus"></div>
+      </div>
+
+      <!-- что нашли -->
+      <div id="refFindings" class="setup-group" hidden style="margin-top:20px">
+        <h2 class="sg-title">Что нашла система</h2>
+        <div id="refCards" class="ref-cards"></div>
+        <div class="field" style="margin-top:14px">
+          <label>Название шаблона</label>
+          <div class="inline">
+            <input id="refName" type="text" placeholder="например: Динамичный маркетинг" />
+            <button class="primary" id="refSave">💾 Сохранить шаблон</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- мои шаблоны -->
+      <div class="setup-group" style="margin-top:20px">
+        <h2 class="sg-title">Мои шаблоны стиля</h2>
+        <p class="sub" id="tplEmpty">Пока нет шаблонов — загрузи референс выше.</p>
+        <div id="tplList" class="tpl-list"></div>
+      </div>
+    </section>
+
     <!-- НАСТРОЙКА -->
     <section class="tab" id="tab-setup">
       <h1>Настройка</h1>
-      <p class="hint">Заполни один раз. Каждый ключ — со ссылкой «где взять».</p>
+      <p class="hint">Заполни один раз. Внизу — кнопка «Сохранить» (всегда видна).</p>
 
-      <div class="field">
-        <label>Токен Telegram-бота <a href="https://t.me/BotFather" target="_blank">@BotFather → /newbot</a></label>
-        <div class="inline">
-          <input id="telegramToken" type="text" placeholder="123456:ABC-..." />
-          <button id="checkTg">Проверить</button>
-          <span class="badge" id="tgBadge"></span>
+      <!-- 1. ГЛАВНОЕ -->
+      <div class="setup-group">
+        <h2 class="sg-title">1 · Главное <span class="sg-note">без этого не работает</span></h2>
+
+        <div class="field">
+          <label>Токен Telegram-бота <a href="https://t.me/BotFather" target="_blank">@BotFather → /newbot</a></label>
+          <div class="inline">
+            <input id="telegramToken" type="text" placeholder="123456:ABC-..." />
+            <button id="checkTg">Проверить</button>
+            <span class="badge" id="tgBadge"></span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Ключ ElevenLabs — озвучка <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">где взять</a> <span class="badge quota" id="elevenQuota"></span></label>
+          <div class="inline">
+            <input id="elevenKey" type="password" placeholder="xi-api-key…" />
+            <button id="elevenCheck" title="Проверить баланс">↻ баланс</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>🎙️ Голос и динамичность</label>
+          <div class="inline">
+            <select id="voicePreset">
+              <option value="IKne3meq5aSn9XLyUdCD">Charlie — спокойный</option>
+              <option value="TX3LPaxmHKxFdv7VOQHJ">Liam — энергичный</option>
+              <option value="pNInz6obpgDQGcFmaJgB">Adam — уверенный</option>
+              <option value="custom">Свой Voice ID…</option>
+            </select>
+            <select id="voiceDyn">
+              <option value="calm">Спокойно</option>
+              <option value="balanced">Сбалансированно</option>
+              <option value="energetic">Энергично</option>
+            </select>
+          </div>
+          <input id="voiceId" type="text" placeholder="свой Voice ID (ElevenLabs)" style="margin-top:8px; display:none" />
+          <p class="sub" style="margin-top:8px">Паузы: ставь знаки препинания или тег <b>&lt;break time="0.6s"/&gt;</b> в сценарии.</p>
         </div>
       </div>
 
-      <div class="field">
-        <label>Ключ ElevenLabs (озвучка) <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">где взять</a></label>
-        <input id="elevenKey" type="password" placeholder="xi-api-key…" />
-      </div>
-      <div class="field">
-        <label>🎙️ Голос и динамичность</label>
-        <div class="inline">
-          <select id="voicePreset">
-            <option value="IKne3meq5aSn9XLyUdCD">Charlie — спокойный</option>
-            <option value="TX3LPaxmHKxFdv7VOQHJ">Liam — энергичный</option>
-            <option value="pNInz6obpgDQGcFmaJgB">Adam — уверенный</option>
-            <option value="custom">Свой Voice ID…</option>
+      <!-- 2. КАДРЫ ДЛЯ ВИДЕО -->
+      <div class="setup-group">
+        <h2 class="sg-title">2 · Кадры для видео</h2>
+
+        <div class="field">
+          <label>Ключ Pexels — бесплатный сток <a href="https://www.pexels.com/api/" target="_blank">где взять</a> <span class="badge quota" id="pexelsQuota"></span></label>
+          <div class="inline">
+            <input id="pexelsKey" type="password" placeholder="Pexels API key…" />
+            <button id="pexelsCheck" title="Проверить остаток">↻ баланс</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>🤖 ИИ-генерация биролов <span class="opt">— платно, по желанию</span></label>
+          <p class="sub">Если под фразу нет готового кадра — догенерим ИИ. Выбери провайдера:</p>
+          <select id="genProvider">
+            <option value="none">Выключено (только сток / свой каталог)</option>
+            <option value="kie">kie.ai (Veo 3.1 — дёшево)</option>
+            <option value="fal">FAL.ai (Kling / Veo / Runway)</option>
           </select>
-          <select id="voiceDyn">
-            <option value="calm">Спокойно</option>
-            <option value="balanced">Сбалансированно</option>
-            <option value="energetic">Энергично</option>
+
+          <!-- kie.ai -->
+          <div id="genKie" class="gen-block" hidden>
+            <div class="inline" style="margin-top:10px">
+              <input id="kieKey" type="password" placeholder="kie.ai API key" />
+              <button id="kieBalanceBtn">Проверить баланс</button>
+              <span class="badge" id="kieBalance"></span>
+            </div>
+            <label style="margin-top:6px"><a href="https://kie.ai/api-key" target="_blank">взять ключ kie.ai</a></label>
+          </div>
+
+          <!-- FAL -->
+          <div id="genFal" class="gen-block" hidden>
+            <input id="falKey" type="password" placeholder="FAL API key" style="margin-top:10px" />
+            <div class="inline" style="margin-top:8px">
+              <select id="falModel">
+                <option value="kling">Kling (быстро, дёшево)</option>
+                <option value="kling-pro">Kling Pro (качество)</option>
+                <option value="veo">Veo</option>
+                <option value="runway">Runway</option>
+              </select>
+            </div>
+            <label style="margin-top:6px"><a href="https://fal.ai/dashboard/keys" target="_blank">создать FAL key</a></label>
+          </div>
+
+          <div class="inline" id="genMaxRow" style="margin-top:10px" hidden>
+            <label style="margin:0">Макс ИИ-клипов на ролик:</label>
+            <input id="genMax" type="number" min="0" max="6" value="2" style="width:90px" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Ключ OpenAI — умный подбор + разбор референса <a href="https://platform.openai.com/api-keys" target="_blank">где взять</a> <span class="badge quota" id="openaiQuota"></span></label>
+          <div class="inline">
+            <input id="openaiKey" type="password" placeholder="sk-…" />
+            <button id="openaiCheck" title="Проверить ключ">↻ проверить</button>
+          </div>
+        </div>
+
+        <div class="field gdrive">
+          <label>📦 Свои клипы, музыка, звуки</label>
+          <p class="sub">Добавляются во вкладке <b>«Мой контент»</b> — просто кидай файлы в папки.</p>
+        </div>
+      </div>
+
+      <!-- 3. СТИЛЬ И ОФОРМЛЕНИЕ -->
+      <div class="setup-group">
+        <h2 class="sg-title">3 · Стиль и оформление</h2>
+
+        <div class="field gdrive">
+          <label>🎨 Брендбук — титры</label>
+          <p class="sub">Свой шрифт и цвет акцента титров.</p>
+          <div class="inline">
+            <button id="setFontBtn">Загрузить шрифт (.ttf / .otf)</button>
+            <span class="badge" id="fontBadge"></span>
+            <button id="clearFontBtn" class="ghost" style="display:none">Сбросить</button>
+          </div>
+          <div class="inline" style="margin-top:10px; align-items:center">
+            <label style="margin:0">Цвет акцента:</label>
+            <input id="accentColor" type="color" value="#42C8F5" style="width:54px; height:34px; padding:2px; cursor:pointer" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Музыка (URL mp3) <span class="opt">— по желанию, иначе из папки «Музыка»</span></label>
+          <input id="musicUrl" type="text" placeholder="https://…/track.mp3" />
+        </div>
+
+        <div class="field">
+          <label>🔊 Звуки переходов</label>
+          <label class="vo-enhance"><input type="checkbox" id="transitionSfx" /> Добавлять вжухи/risers из папки «Звуки» <span class="opt">(по умолчанию выкл)</span></label>
+        </div>
+
+        <div class="field">
+          <label>🎨 Тема оформления</label>
+          <select id="themeSel">
+            <option value="dark">Тёмно-синяя</option>
+            <option value="light">Светлая</option>
           </select>
         </div>
-        <input id="voiceId" type="text" placeholder="свой Voice ID (ElevenLabs)" style="margin-top:8px; display:none" />
-        <p class="sub" style="margin-top:8px">Паузы в озвучке: ставь знаки препинания (запятые, точки, «…») или тег <b>&lt;break time="0.6s"/&gt;</b> в нужном месте сценария.</p>
       </div>
 
-      <div class="field">
-        <label>Ключ OpenAI (умный подбор кадров) <a href="https://platform.openai.com/api-keys" target="_blank">где взять</a> <span class="opt">— необязательно</span></label>
-        <input id="openaiKey" type="password" placeholder="sk-…" />
-      </div>
-      <div class="field">
-        <label>Ключ Pexels (сток-видео) <a href="https://www.pexels.com/api/" target="_blank">где взять</a> <span class="opt">— необязательно</span></label>
-        <input id="pexelsKey" type="password" placeholder="Pexels API key…" />
-      </div>
-
-      <div class="field gdrive">
-        <label>📦 Свои клипы, музыка, звуки</label>
-        <p class="sub">Свой контент добавляется во вкладке <b>«Мой контент»</b> — просто кидай файлы в папки. Никакого Google Drive не нужно.</p>
-      </div>
-
-      <div class="field gdrive">
-        <label>🎨 Брендбук — оформление титров</label>
-        <p class="sub">Свой шрифт и цвет акцента для титров (как в твоём бренде).</p>
-        <div class="inline">
-          <button id="setFontBtn">Загрузить шрифт (.ttf / .otf)</button>
-          <span class="badge" id="fontBadge"></span>
-          <button id="clearFontBtn" class="ghost" style="display:none">Сбросить</button>
-        </div>
-        <div class="inline" style="margin-top:10px; align-items:center">
-          <label style="margin:0">Цвет акцента титров:</label>
-          <input id="accentColor" type="color" value="#42C8F5" style="width:54px; height:34px; padding:2px; cursor:pointer" />
+      <!-- 4. АВАТАР (опционально) -->
+      <div class="setup-group">
+        <h2 class="sg-title">4 · Режим «Аватар» <span class="sg-note">по желанию</span></h2>
+        <div class="field gdrive">
+          <label>🧑‍💼 HeyGen <span class="badge quota" id="heygenQuota"></span></label>
+          <p class="sub">Говорящий аватар озвучивает сценарий + титры и музыка сверху. Включается в режиме «Аватар» на вкладке «Создать видео».</p>
+          <div class="inline">
+            <input id="heygenKey" type="password" placeholder="HeyGen API key" />
+            <button id="heygenCheck" title="Проверить баланс">↻ баланс</button>
+          </div>
+          <input id="heygenAvatarId" type="text" placeholder="Avatar ID" style="margin-top:8px" />
+          <input id="heygenVoiceId" type="text" placeholder="Voice ID (необязательно)" style="margin-top:8px" />
+          <label style="margin-top:6px"><a href="https://app.heygen.com/settings?nav=API" target="_blank">взять API key</a> · <a href="https://app.heygen.com/avatars" target="_blank">ID аватара</a></label>
         </div>
       </div>
 
-      <div class="field gdrive">
-        <label>🤖 ИИ-генерация биролов <span class="opt">— необязательно</span></label>
-        <p class="sub">Помимо стока Pexels — генерировать уникальные кадры моделями Kling / Veo / Runway через FAL.ai (один ключ — все модели). Платно за клип, поэтому есть лимит на ролик.</p>
-        <select id="genProvider">
-          <option value="none">Выключено (только сток/каталог)</option>
-          <option value="fal">FAL.ai (Kling / Veo / Runway)</option>
-        </select>
-        <input id="falKey" type="password" placeholder="FAL API key" style="margin-top:8px" />
-        <div class="inline" style="margin-top:8px">
-          <select id="falModel">
-            <option value="kling">Kling (быстро, дёшево)</option>
-            <option value="kling-pro">Kling Pro (качество)</option>
-            <option value="veo">Veo</option>
-            <option value="runway">Runway</option>
-          </select>
-          <input id="genMax" type="number" min="0" max="6" placeholder="макс клипов" style="width:120px" />
-        </div>
-        <label style="margin-top:6px"><a href="https://fal.ai/dashboard/keys" target="_blank">создать FAL key</a></label>
+      <!-- ЛИПКАЯ ПАНЕЛЬ СОХРАНЕНИЯ -->
+      <div class="save-bar">
+        <button class="primary" id="saveBtn">💾 Сохранить настройки</button>
+        <span class="badge" id="saveBadge"></span>
       </div>
-
-      <div class="field gdrive">
-        <label>🧑‍💼 Аватар HeyGen <span class="opt">— для режима «Аватар»</span></label>
-        <p class="sub">Говорящий аватар озвучивает сценарий, сверху — титры и музыка. Выбери режим «Аватар» на вкладке «Создать видео».</p>
-        <input id="heygenKey" type="password" placeholder="HeyGen API key" />
-        <input id="heygenAvatarId" type="text" placeholder="Avatar ID" style="margin-top:8px" />
-        <input id="heygenVoiceId" type="text" placeholder="Voice ID (необязательно — иначе авто рус. голос)" style="margin-top:8px" />
-        <label style="margin-top:6px"><a href="https://app.heygen.com/settings?nav=API" target="_blank">взять API key</a> · <a href="https://app.heygen.com/avatars" target="_blank">ID аватара</a></label>
-      </div>
-
-      <div class="field">
-        <label>Музыка (URL mp3) <span class="opt">— необязательно</span></label>
-        <input id="musicUrl" type="text" placeholder="https://…/track.mp3" />
-      </div>
-
-      <button class="primary" id="saveBtn">Сохранить</button>
-      <span class="badge" id="saveBadge"></span>
     </section>
   </main>
 

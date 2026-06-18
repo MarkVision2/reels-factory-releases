@@ -55,7 +55,7 @@ const heuristicPicks = (blocks, cat) => {
 };
 
 // GPT-раскладка (если есть ключ OpenAI) — скрин / свой клип / европейский Pexels / ИИ-генерация.
-const gptPicks = async (blocks, cat, openaiKey, genOn = false) => {
+const gptPicks = async (blocks, cat, openaiKey, genOn = false, themeBias = []) => {
   const screens = cat.filter((c) => c.type === "screen").map((c) => `${c.id} (${(c.tags || []).join(", ")})`).join("; ");
   const own = cat.filter((c) => c.type !== "screen").map((c) => `${c.id} [${c.type}] ${c.name}: ${c.desc || (c.tags || []).join(", ")}`).join("; ");
   const segList = blocks.map((b, i) => `${i}: "${b.text}"`).join("\n");
@@ -66,6 +66,7 @@ const gptPicks = async (blocks, cat, openaiKey, genOn = false) => {
     '- {"i":N,"query":"english stock search","must":["word"]} — свежий Pexels.\n' +
     (genOn ? '- {"i":N,"gen":"detailed english visual prompt"} — СГЕНЕРИРОВАТЬ кадр ИИ (для уникальных «геройских» планов, которых нет в стоке). Используй экономно, 1-2 на ролик.\n' : "") +
     'ЖЁСТКО ПО СТОКУ/ГЕНЕРАЦИИ: тема всегда маркетинг/бизнес. Если в кадре ЛЮДИ — query ОБЯЗАН начинаться с "young european caucasian" и описывать маркетолога/предпринимателя. Запрещены african/black/asian/indian/middle eastern. Примеры: "young european caucasian marketer laptop office", "european caucasian woman marketing meeting".\n' +
+    (themeBias.length ? `ПРЕДПОЧТИТЕЛЬНЫЕ ТЕМЫ БИРОЛОВ (из референса пользователя): ${themeBias.join(", ")}. Старайся подбирать кадры в этих темах.\n` : "") +
     'Микс источников, не повторяй соседние, скрины на продуктовые строки. Верни СТРОГО JSON {"picks":[...]} длиной как число сегментов.\n\nСЕГМЕНТЫ:\n' + segList;
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -79,12 +80,12 @@ const gptPicks = async (blocks, cat, openaiKey, genOn = false) => {
 
 // blocks -> segments[{start,end,text, clip_url|clip_path|broll, fit, in}]
 // gen = {provider,key,model,max} — опциональная ИИ-генерация биролов (Kling/Veo через FAL).
-export const buildSegments = async ({ blocks, vdur, catalog, openaiKey, pexelsKey, gen = null, onProgress = () => {} }) => {
+export const buildSegments = async ({ blocks, vdur, catalog, openaiKey, pexelsKey, gen = null, themeBias = [], onProgress = () => {} }) => {
   const byId = {}; for (const c of catalog) byId[c.id] = c;
   const genOn = !!(gen && gen.key);
   let picks;
   if (openaiKey && catalog.length) {
-    try { picks = await gptPicks(blocks, catalog, openaiKey, genOn); }
+    try { picks = await gptPicks(blocks, catalog, openaiKey, genOn, themeBias); }
     catch { picks = heuristicPicks(blocks, catalog); }
   } else {
     picks = heuristicPicks(blocks, catalog);

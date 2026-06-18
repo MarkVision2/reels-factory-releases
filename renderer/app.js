@@ -1,6 +1,6 @@
 // Логика окна: вкладки, настройка, создание видео, статус бота.
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["telegramToken", "elevenKey", "voiceId", "openaiKey", "pexelsKey", "genProvider", "falKey", "falModel", "genMax", "musicUrl", "accentColor", "heygenKey", "heygenAvatarId", "heygenVoiceId"];
+const FIELDS = ["telegramToken", "elevenKey", "voiceId", "openaiKey", "pexelsKey", "genProvider", "falKey", "falModel", "genMax", "kieKey", "musicUrl", "accentColor", "heygenKey", "heygenAvatarId", "heygenVoiceId"];
 
 // вкладки
 document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -19,6 +19,16 @@ const VOICE_PRESETS = ["IKne3meq5aSn9XLyUdCD", "TX3LPaxmHKxFdv7VOQHJ", "pNInz6ob
 async function loadCfg() {
   const cfg = await window.api.getConfig();
   FIELDS.forEach((f) => { if ($(f)) $(f).value = cfg[f] || ""; });
+  // тема
+  const theme = cfg.theme || "dark";
+  document.documentElement.dataset.theme = theme;
+  if ($("themeSel")) $("themeSel").value = theme;
+  // звуки переходов
+  if ($("transitionSfx")) $("transitionSfx").checked = !!cfg.transitionSfx;
+  // провайдер ИИ-генерации → показать нужные поля
+  applyGenProvider();
+  // счётчики баланса по заданным ключам — сразу
+  refreshAllQuotas();
   // голос: пресет/кастом
   const vid = cfg.voiceId || VOICE_PRESETS[0];
   if (VOICE_PRESETS.includes(vid)) { $("voicePreset").value = vid; $("voiceId").style.display = "none"; }
@@ -91,9 +101,155 @@ $("saveBtn").addEventListener("click", async () => {
   const dynMap = { calm: { s: 0.6, st: 0.15 }, balanced: { s: 0.45, st: 0.4 }, energetic: { s: 0.3, st: 0.6 } };
   const dm = dynMap[$("voiceDyn").value] || dynMap.balanced;
   cfg.voiceStability = dm.s; cfg.voiceStyle = dm.st;
+  if ($("themeSel")) cfg.theme = $("themeSel").value;
+  if ($("transitionSfx")) cfg.transitionSfx = $("transitionSfx").checked;
   await window.api.saveConfig(cfg);
   const b = $("saveBadge"); b.textContent = "✓ сохранено"; b.className = "badge ok";
   setTimeout(() => { b.textContent = ""; }, 2500);
+});
+
+// ИИ-генерация: показать поля выбранного провайдера
+function applyGenProvider() {
+  const p = $("genProvider") ? $("genProvider").value : "none";
+  if ($("genKie")) $("genKie").hidden = p !== "kie";
+  if ($("genFal")) $("genFal").hidden = p !== "fal";
+  if ($("genMaxRow")) $("genMaxRow").hidden = p === "none";
+}
+if ($("genProvider")) $("genProvider").addEventListener("change", applyGenProvider);
+
+// единый счётчик баланса по ключу (ElevenLabs / kie.ai / HeyGen / Pexels)
+async function showQuota(service, keyId, badgeId, manual = false) {
+  const badge = $(badgeId); if (!badge) return;
+  const key = $(keyId) ? $(keyId).value.trim() : "";
+  if (!key) { if (manual) { badge.textContent = "вставь ключ"; badge.className = "badge err"; } else { badge.textContent = ""; badge.className = "badge quota"; } return; }
+  badge.textContent = "…"; badge.className = "badge quota";
+  const r = await window.api.checkQuota(service, key);
+  if (r.ok) {
+    badge.textContent = "💰 " + r.text; badge.className = "badge quota ok";
+    // сразу сохраняем рабочий ключ в конфиг (чтобы не терялся до «Сохранить» и был виден референсу и т.п.)
+    try { const cfg = await window.api.getConfig(); if (cfg[keyId] !== key) { cfg[keyId] = key; await window.api.saveConfig(cfg); } } catch {}
+  } else { badge.textContent = "✕ " + r.error; badge.className = "badge quota err"; }
+}
+const QUOTAS = [
+  ["elevenlabs", "elevenKey", "elevenQuota", "elevenCheck"],
+  ["kie", "kieKey", "kieBalance", "kieBalanceBtn"],
+  ["heygen", "heygenKey", "heygenQuota", "heygenCheck"],
+  ["pexels", "pexelsKey", "pexelsQuota", "pexelsCheck"],
+  ["openai", "openaiKey", "openaiQuota", "openaiCheck"],
+];
+QUOTAS.forEach(([service, keyId, badgeId, btnId]) => {
+  if ($(btnId)) $(btnId).addEventListener("click", () => showQuota(service, keyId, badgeId, true));
+});
+// автопоказ всех счётчиков (по ключам, которые уже заданы)
+function refreshAllQuotas() { QUOTAS.forEach(([s, k, b]) => showQuota(s, k, b, false)); }
+
+// --- СТИЛЬ ПО РЕФЕРЕНСУ ---
+let refProfile = null;
+window.api.on("ref:progress", (p) => { if (p?.label) setRefStatus("busy", p.label); });
+function setRefStatus(cls, text) { const j = $("refStatus"); if (j) { j.className = "job " + cls; j.textContent = text; } }
+const POS_RU = { bottom: "снизу", center: "по центру", top: "сверху" };
+const ENERGY_RU = { calm: "спокойная", medium: "средняя", energetic: "энергичная" };
+const INT_RU = { calm: "спокойный", dynamic: "динамичный", fast: "быстрый" };
+
+function renderFindings(p) {
+  refProfile = p;
+  const c = p.captions || {}, pa = p.pacing || {}, br = p.broll || {};
+  const cards = [
+    ...(p.topic ? [["Тема ролика", p.topic]] : []),
+    ["Титры", c.present === false ? "нет" : `${POS_RU[c.position] || c.position}, ${c.style || ""}`],
+    ["Цвет титров", `<span class="ref-swatch" style="background:${c.color}"></span>${c.color}`],
+    ["Размер титров", `${c.sizePct}% высоты`],
+    ["Анимация", c.animation],
+    ["Ритм", `средний план ${pa.avgShotSec}с · ${INT_RU[pa.intensity] || pa.intensity} (${pa.cutsPerMin}/мин)`],
+    ["Переходы", p.transitions],
+    ["Темы биролов (для подбора похожих)", (br.themes || []).join(", ") || "—"],
+    ["Музыка", ENERGY_RU[p.music?.energy] || p.music?.energy || "—"],
+    ["Вайб", p.vibe || "—"],
+  ];
+  $("refCards").innerHTML = cards.map(([k, v]) => `<div class="ref-card"><div class="rc-k">${k}</div><div class="rc-v">${v || "—"}</div></div>`).join("");
+  // конкретные биролы-вставки, которые ИИ увидел в видео
+  if (Array.isArray(br.shots) && br.shots.length) {
+    const items = br.shots.map((s) => `<li>${s}</li>`).join("");
+    $("refCards").innerHTML += `<div class="ref-card" style="grid-column:1/-1"><div class="rc-k">Биролы-вставки в видео</div><ul class="ref-shots">${items}</ul></div>`;
+  }
+  if (p.notes) $("refCards").innerHTML += `<div class="ref-card" style="grid-column:1/-1"><div class="rc-k">Совет</div><div class="rc-v" style="font-weight:400">${p.notes}</div></div>`;
+  // кадры из видео — выбираемые: можно вырезать выбранные куски в свой контент (биролы)
+  if (Array.isArray(p.frames) && p.frames.length) {
+    const thumbs = p.frames.map((f, i) => `<div class="ref-frame-wrap" data-t="${f.t}" data-i="${i}"><img class="ref-frame" src="${f.src}" /><span class="ref-pick">✓</span></div>`).join("");
+    $("refCards").innerHTML += `<div class="ref-card" style="grid-column:1/-1"><div class="rc-k">Кадры из референса — отметь, какие вырезать в свой контент (биролы)</div><div class="ref-frames">${thumbs}</div><div class="inline" style="margin-top:12px"><button class="primary" id="refExtract">✂️ Вырезать выбранные в «Мой контент»</button><span class="badge" id="refExtractBadge"></span></div></div>`;
+  }
+  if (!p.aiUsed) $("refCards").innerHTML += `<div class="ref-card" style="grid-column:1/-1"><div class="rc-v" style="font-weight:400;color:var(--mut)">⚠️ Без ключа OpenAI разобран только ритм. Добавь ключ в «Настройке» для полного разбора стиля.</div></div>`;
+  $("refName").value = p.createdFrom ? p.createdFrom.replace(/\.[^.]+$/, "") : "Мой стиль";
+  $("refFindings").hidden = false;
+  // выбор кадров + вырезка в контент
+  document.querySelectorAll(".ref-frame-wrap").forEach((el) => el.addEventListener("click", () => el.classList.toggle("sel")));
+  const ex = document.getElementById("refExtract");
+  if (ex) ex.addEventListener("click", async () => {
+    const sel = [...document.querySelectorAll(".ref-frame-wrap.sel")].map((el) => Number(el.dataset.t));
+    const badge = document.getElementById("refExtractBadge");
+    if (!sel.length) { badge.textContent = "отметь хотя бы один кадр"; badge.className = "badge err"; return; }
+    if (!refProfile?.sourcePath) { badge.textContent = "нет исходного видео"; badge.className = "badge err"; return; }
+    badge.textContent = `вырезаю ${sel.length}…`; badge.className = "badge"; ex.disabled = true;
+    const cfg = await window.api.getConfig();
+    const r = await window.api.extractRefClips({ sourcePath: refProfile.sourcePath, times: sel, project: cfg.activeProject || "" });
+    ex.disabled = false;
+    if (r.ok) { badge.textContent = `✅ добавлено ${r.added} в «Мой контент»`; badge.className = "badge ok"; }
+    else { badge.textContent = "✕ " + r.error; badge.className = "badge err"; }
+  });
+}
+
+if ($("refBtn")) $("refBtn").addEventListener("click", async () => {
+  setRefStatus("busy", "Выбери видео…");
+  $("refBtn").disabled = true;
+  const r = await window.api.analyzeReference();
+  $("refBtn").disabled = false;
+  if (r.canceled) { setRefStatus("", ""); return; }
+  if (r.ok) { setRefStatus("ok", "✅ Разобрано"); renderFindings(r.profile); }
+  else setRefStatus("err", "❌ " + r.error);
+});
+
+if ($("refSave")) $("refSave").addEventListener("click", async () => {
+  if (!refProfile) return;
+  const name = $("refName").value.trim() || "Мой стиль";
+  const { frames, ...slim } = refProfile; // кадры не сохраняем в шаблон (тяжёлые)
+  await window.api.saveTemplate({ ...slim, name });
+  $("refFindings").hidden = true; refProfile = null; setRefStatus("", "");
+  refreshTemplates();
+});
+
+async function refreshTemplates() {
+  const list = await window.api.listTemplates();
+  const cfg = await window.api.getConfig();
+  const active = cfg.activeTemplate || "";
+  $("tplEmpty").style.display = list.length ? "none" : "";
+  $("tplList").innerHTML = list.map((t) => {
+    const on = t.id === active;
+    const meta = `титры ${POS_RU[t.captions?.position] || ""} · ${t.captions?.color || ""} · план ${t.pacing?.avgShotSec || "?"}с`;
+    return `<div class="tpl-row${on ? " active" : ""}">
+      <div class="tpl-info"><div class="tpl-name">${t.name || t.id}</div><div class="tpl-meta">${meta}</div></div>
+      <button class="tpl-apply${on ? " on" : ""}" data-id="${t.id}">${on ? "✓ Активен" : "Применить"}</button>
+      <button class="tpl-del" data-id="${t.id}">✕</button>
+    </div>`;
+  }).join("");
+  $("tplList").querySelectorAll(".tpl-apply").forEach((b) => b.addEventListener("click", async () => {
+    const id = b.dataset.id; const cur = (await window.api.getConfig()).activeTemplate;
+    await window.api.setActiveTemplate(cur === id ? "" : id); // повторное нажатие — снять
+    refreshTemplates();
+  }));
+  $("tplList").querySelectorAll(".tpl-del").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Удалить шаблон?")) return;
+    await window.api.deleteTemplate(b.dataset.id); refreshTemplates();
+  }));
+}
+refreshTemplates();
+
+// смена темы — мгновенно применяем и сохраняем
+if ($("themeSel")) $("themeSel").addEventListener("change", async () => {
+  const theme = $("themeSel").value;
+  document.documentElement.dataset.theme = theme;
+  const cfg = await window.api.getConfig();
+  cfg.theme = theme;
+  await window.api.saveConfig(cfg);
 });
 
 // мой контент — навигатор по папкам (как в Finder, с проектами)
@@ -208,6 +364,8 @@ function applyMode(m) {
   $("ownHint").hidden = !own;
   $("createBtn").hidden = own;
   $("createOwnBtn").hidden = !own;
+  // блок «своя озвучка» — только в режиме «С озвучкой» (faceless)
+  if ($("voiceOwnBox")) $("voiceOwnBox").hidden = (m !== "faceless");
 }
 window.api.getConfig().then((c) => { $("videoMode").value = c.videoMode || "faceless"; applyMode(c.videoMode || "faceless"); });
 $("videoMode").addEventListener("change", async () => {
@@ -232,13 +390,67 @@ $("projNew").addEventListener("click", async () => {
   else alert(r.error || "Не удалось создать");
 });
 
+// --- своя озвучка: загрузка файла или запись с микрофона ---
+let voiceAudioPath = null;
+let mediaRec = null, recChunks = [], recTimer = null, recSec = 0, voUrl = null;
+const mmss = (s) => Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+function voSet(path, label, previewUrl) {
+  voiceAudioPath = path;
+  const s = $("voStatus");
+  if (path) { s.textContent = label; s.className = "vo-status ok"; $("voClear").hidden = false; }
+  else { s.textContent = ""; s.className = "vo-status"; $("voClear").hidden = true; }
+  // плеер прослушивания
+  const pl = $("voPlayer");
+  if (voUrl) { URL.revokeObjectURL(voUrl); voUrl = null; }
+  if (previewUrl) { voUrl = previewUrl; pl.src = previewUrl; pl.hidden = false; }
+  else { pl.removeAttribute("src"); pl.hidden = true; }
+}
+if ($("voUpload")) {
+  $("voUpload").addEventListener("click", () => $("voFile").click());
+  $("voFile").addEventListener("change", () => {
+    const f = $("voFile").files[0];
+    if (f && f.path) voSet(f.path, "📁 " + f.name, URL.createObjectURL(f));
+  });
+  $("voClear").addEventListener("click", () => { voSet(null); $("voFile").value = ""; });
+  $("voRecord").addEventListener("click", async () => {
+    const btn = $("voRecord");
+    if (mediaRec && mediaRec.state === "recording") { mediaRec.stop(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      recChunks = [];
+      mediaRec = new MediaRecorder(stream, { audioBitsPerSecond: 128000 });
+      mediaRec.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+      mediaRec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        clearInterval(recTimer); $("voTimer").hidden = true;
+        btn.textContent = "⏺ Записать"; btn.classList.remove("rec");
+        const blob = new Blob(recChunks, { type: "audio/webm" });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        voSet(null);
+        const s = $("voStatus"); s.textContent = "сохраняю запись…"; s.className = "vo-status";
+        const p = await window.api.saveRecording(Array.from(bytes));
+        if (p) voSet(p, "🎙 запись " + mmss(recSec), URL.createObjectURL(blob));
+        else { s.textContent = "не удалось сохранить запись"; s.className = "vo-status err"; }
+      };
+      mediaRec.start();
+      recSec = 0; $("voTimer").textContent = "0:00"; $("voTimer").hidden = false;
+      recTimer = setInterval(() => { recSec++; $("voTimer").textContent = mmss(recSec); }, 1000);
+      btn.textContent = "⏹ Стоп"; btn.classList.add("rec");
+    } catch (e) {
+      const s = $("voStatus"); s.textContent = "нет доступа к микрофону"; s.className = "vo-status err";
+    }
+  });
+}
+
 // создать видео из окна
 $("createBtn").addEventListener("click", async () => {
   const script = $("scriptInput").value.trim();
-  if (!script) return;
+  if (!script && !voiceAudioPath) { setJob("err", "Вставь сценарий или добавь свою озвучку"); return; }
   setJob("busy", "Запускаю…");
   $("createBtn").disabled = true;
-  const r = await window.api.createVideo(script);
+  const r = await window.api.createVideo(script, { voiceAudioPath, voiceEnhance: voiceAudioPath ? $("voEnhance").checked : false });
   $("createBtn").disabled = false;
   if (r.ok) setJob("ok", "✅ Готово — во вкладке «Готовые видео»" + (r.sentToTg ? " + отправлено в Telegram" : ""));
   else setJob("err", "❌ " + r.error);

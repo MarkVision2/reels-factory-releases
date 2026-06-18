@@ -33,6 +33,15 @@ export const runFfmpeg = (args, { label = "ffmpeg", env } = {}) =>
     );
   });
 
+// «Студийный звук»: мягко, без «робота». НЧ-гул → лёгкий шумодав → де-эссер (свист «с/ш») →
+// мягкий компрессор → нормализация громкости (EBU R128). Вход — речь, выход — mono wav 44.1кГц.
+export const enhanceVoice = (inPath, outPath) =>
+  runFfmpeg([
+    "-y", "-i", inPath,
+    "-af", "highpass=f=75,afftdn=nr=8:nf=-30,deesser,acompressor=threshold=-20dB:ratio=2.5:attack=8:release=200:makeup=2,loudnorm=I=-16:TP=-1.5:LRA=11",
+    "-ar", "44100", "-ac", "1", outPath,
+  ], { label: "enhance-voice" });
+
 export const ffprobeDuration = (filePath) =>
   new Promise((resolve) => {
     const proc = spawn(ffmpegPath, ["-i", filePath], { stdio: ["ignore", "ignore", "pipe"] });
@@ -105,10 +114,12 @@ const hexToAss = (hex) => {
   return `&H00${b}${g}${r}`.toUpperCase();
 };
 
-const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor = null } = {}) => {
+const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor = null, position = "bottom", sizePct = 5.2 } = {}) => {
   const accent = hexToAss(accentColor) || "&H0057C8FF"; // янтарь BGR по умолчанию
-  const fontSize = Math.round(outH * 0.052); // крупно, но влезает по 2 слова
-  const marginV = Math.round(outH * 0.23);
+  const fontSize = Math.round(outH * (Math.min(9, Math.max(3.5, Number(sizePct) || 5.2)) / 100));
+  // позиция титров (из шаблона): низ / центр / верх
+  const align = position === "center" ? 5 : position === "top" ? 8 : 2;
+  const marginV = position === "center" ? 0 : position === "top" ? Math.round(outH * 0.16) : Math.round(outH * 0.23);
   // активное слово: цвет-акцент + резкий поп (заброс масштаба → оседание) + толстый контур = «панч»
   const pop = `{\\1c${accent}\\fscx116\\fscy116\\bord8\\t(0,70,\\fscx104\\fscy104)\\t(70,140,\\bord6)}`;
   const dlg = [];
@@ -137,7 +148,7 @@ const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor
     "ScaledBorderAndShadow: yes", "WrapStyle: 1", "",
     "[V4+ Styles]",
     "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00101010,&H90000000,1,0,0,0,100,100,0.5,0,1,6,2,2,46,46,${marginV},1`,
+    `Style: Default,Montserrat,${fontSize},&H00FFFFFF,&H000000FF,&H00101010,&H90000000,1,0,0,0,100,100,0.5,0,1,6,2,${align},46,46,${marginV},1`,
     "", "[Fonts]", "fontname: Montserrat0.ttf", fontEncoded, "",
     "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
   ].join("\n");
@@ -165,7 +176,7 @@ const loadFont = async (workDir, customPath = null) => {
 
 // --- ЛОКАЛЬНАЯ faceless-склейка: клипы по сегментам + голос + музыка + титры ---
 // segments: [{start,end,text, clip_path | clip_url, fit?, in?}], voicePath, words[], musicPath?
-export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, sfxPaths = [], fontPath = null, accentColor = null, outPath }) => {
+export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, sfxPaths = [], fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, outPath }) => {
   const D = await ffprobeDuration(voicePath);
   if (!segments.length) throw new Error("нет сегментов");
 
@@ -188,7 +199,7 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   let hasCaps = false;
   let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
   if (font && words.length) {
-    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor }));
+    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor, position: capPosition, sizePct: capSize }));
     const fontDir = path.dirname(font.path);
     const fontsConf = path.join(workDir, "fonts.conf");
     await fs.writeFile(fontsConf, `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n<dir>${fontDir}</dir>\n<cachedir>${path.join(workDir, "fc-cache")}</cachedir>\n</fontconfig>\n`);
@@ -259,7 +270,7 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
     filter.push(`[${voiceIdx}:a]aresample=44100[${aBase}]`);
   }
   if (sfxInputs.length) {
-    sfxInputs.forEach((s, i) => filter.push(`[${s.idx}:a]aresample=44100,adelay=${s.tMs}|${s.tMs},volume=0.6[sfx${i}]`));
+    sfxInputs.forEach((s, i) => filter.push(`[${s.idx}:a]aresample=44100,adelay=${s.tMs}|${s.tMs},volume=0.32[sfx${i}]`));
     const mixIns = ["[amain]", ...sfxInputs.map((_, i) => `[sfx${i}]`)].join("");
     filter.push(`${mixIns}amix=inputs=${sfxInputs.length + 1}:normalize=0:dropout_transition=0[aout]`);
   }
@@ -273,14 +284,14 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
 
 // РЕЖИМ АВАТАР: видео HeyGen (со звуком) → 1080x1920 + биролы-перебивки + титры + музыка (duck).
 // inserts: [{start,end,path}] — клипы, накладываются поверх аватара в свои окна (звук аватара не трогаем).
-export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, outPath }) => {
+export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, outPath }) => {
   const D = await ffprobeDuration(avatarPath);
   const font = await loadFont(workDir, fontPath);
   const assPath = path.join(workDir, "cap.ass");
   let hasCaps = false;
   let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
   if (font && words.length) {
-    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor }));
+    await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor, position: capPosition, sizePct: capSize }));
     const fontDir = path.dirname(font.path);
     const fontsConf = path.join(workDir, "fonts.conf");
     await fs.writeFile(fontsConf, `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n<fontconfig>\n<dir>${fontDir}</dir>\n<cachedir>${path.join(workDir, "fc-cache")}</cachedir>\n</fontconfig>\n`);

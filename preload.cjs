@@ -5,8 +5,16 @@ contextBridge.exposeInMainWorld("api", {
   getConfig: () => ipcRenderer.invoke("config:get"),
   saveConfig: (cfg) => ipcRenderer.invoke("config:save", cfg),
   validateTelegram: (token) => ipcRenderer.invoke("telegram:validate", token),
-  createVideo: (script) => ipcRenderer.invoke("video:create", script),
+  createVideo: (script, opts) => ipcRenderer.invoke("video:create", script, opts),
   createOwnVideo: () => ipcRenderer.invoke("video:createOwn"),
+  saveRecording: (bytes) => ipcRenderer.invoke("audio:saveRecording", bytes),
+  checkQuota: (service, key) => ipcRenderer.invoke("quota:check", { service, key }),
+  analyzeReference: () => ipcRenderer.invoke("reference:analyze"),
+  extractRefClips: (opts) => ipcRenderer.invoke("reference:extractClips", opts),
+  listTemplates: () => ipcRenderer.invoke("templates:list"),
+  saveTemplate: (profile) => ipcRenderer.invoke("templates:save", profile),
+  deleteTemplate: (id) => ipcRenderer.invoke("templates:delete", id),
+  setActiveTemplate: (id) => ipcRenderer.invoke("templates:setActive", id),
   listVideos: () => ipcRenderer.invoke("video:list"),
   revealVideo: (p) => ipcRenderer.invoke("video:reveal", p),
   deleteVideo: (p) => ipcRenderer.invoke("video:delete", p),
@@ -25,4 +33,11 @@ contextBridge.exposeInMainWorld("api", {
   installUpdate: () => ipcRenderer.invoke("update:install"),
   on: (channel, cb) => ipcRenderer.on(channel, (_e, payload) => cb(payload)),
   platform: process.platform,
+});
+
+// сигнал «контент реально отрисован» — main покажет окно только после этого (нет пустого синего экрана)
+window.addEventListener("DOMContentLoaded", () => {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { ipcRenderer.send("renderer-painted"); } catch {}
+  }));
 });

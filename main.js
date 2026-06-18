@@ -1,6 +1,6 @@
 // Electron main — окно + трей + IPC + Telegram-бот. Никакого терминала для пользователя.
-import { app, BrowserWindow, ipcMain, Tray, Menu, shell, nativeImage, dialog } from "electron";
-import { promises as fs } from "node:fs";
+import { app, BrowserWindow, ipcMain, Tray, Menu, shell, nativeImage, dialog, screen } from "electron";
+import { promises as fs, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -9,16 +9,14 @@ import { TelegramBot, validateToken, sendMessage, sendDocument, getFileLink } fr
 import electronUpdater from "electron-updater";
 import { paths, ensureFolders, readMeta, writeMeta, listProjects, createProject } from "./src/local-content.js";
 import { thumbDataUrl } from "./src/thumbs.js";
+import { runFfmpeg } from "./src/render-core.js";
+import { analyzeReference } from "./src/reference.js";
+import { listTemplates, saveTemplate, deleteTemplate, getTemplate } from "./src/templates.js";
 import { transcribeAudio } from "./src/stt.js";
 
 const { autoUpdater } = electronUpdater;
 const P = paths();
 
-// фикс белого экрана на части Mac: окно отрисовано, но GPU-композитор не выводит кадр.
-// Полное отключение GPU = софтверный рендер (надёжно показывает окно).
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch("disable-gpu");
-app.commandLine.appendSwitch("disable-gpu-compositing");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(app.getPath("userData"), "config.json");
@@ -26,11 +24,12 @@ const FONT_PATH = path.join(app.getPath("userData"), "brand-font.ttf");
 const DEFAULT_CONFIG = {
   elevenKey: "", voiceId: "IKne3meq5aSn9XLyUdCD", openaiKey: "", pexelsKey: "",
   telegramToken: "", musicUrl: "", musicVolume: 0.05,
-  genProvider: "none", falKey: "", falModel: "kling", genMax: 2,
+  genProvider: "none", falKey: "", falModel: "kling", genMax: 2, kieKey: "", kieModel: "veo3_fast",
   fontPath: "", fontName: "", accentColor: "#42C8F5",
   voiceStability: 0.35, voiceStyle: 0.55, voiceSimilarity: 0.8,
   activeProject: "", telegramChatId: "",
   videoMode: "faceless", heygenKey: "", heygenAvatarId: "", heygenVoiceId: "",
+  theme: "dark", transitionSfx: false, activeTemplate: "",
 };
 
 let win = null, tray = null, bot = null, botInfo = null, latestVersion = null;
@@ -46,9 +45,11 @@ const saveConfig = async (cfg) => {
 const toRenderer = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 
 // общая логика: ТЗ -> видео (каталог/музыка/звуки берутся из локальных папок внутри pipeline).
-const makeVideo = async (script, onProgress) => {
+const makeVideo = async (script, onProgress, extra = {}) => {
   const cfg = await loadConfig();
-  return generateVideo({ script, config: cfg, onProgress });
+  let template = null;
+  if (cfg.activeTemplate) template = await getTemplate(app.getPath("userData"), cfg.activeTemplate).catch(() => null);
+  return generateVideo({ script, config: { ...cfg, ...extra, template }, onProgress });
 };
 
 // запустить/перезапустить бота под текущий токен
@@ -89,27 +90,61 @@ const restartBot = async () => {
   updateTray();
 };
 
-const createWindow = () => {
+const createWindow = (cfg = {}, isHeal = false) => {
+  // ВАЖНО: НЕ ставим backgroundColor — на macOS 26 нативный фон-слой иногда перекрывает веб-контент
+  // (виден только цвет фона = «синий/чёрный экран»). Минимальное окно без backgroundColor всегда рисуется.
   win = new BrowserWindow({
     width: 980, height: 720, minWidth: 820, minHeight: 600,
     title: "AI Reels Factory",
-    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+    backgroundColor: (cfg.theme === "light") ? "#f5f5f7" : "#0a0f1f",
+    hasShadow: false, // macOS 26 (Tahoe): тень окна задействует сломанный приватный путь рендера → пустой экран
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false,
+      backgroundThrottling: false, // НЕ усыплять отрисовку у фонового/неактивного окна (иначе пустой экран)
+    },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
-  // принудительная перерисовка окна после загрузки — лечит «белый/чёрный» экран (кадр не выводится)
-  win.webContents.on("did-finish-load", () => {
-    setTimeout(() => {
-      if (!win || win.isDestroyed()) return;
-      const b = win.getBounds();
-      win.setBounds({ ...b, height: b.height + 1 });
-      win.setBounds(b);
-      win.webContents.invalidate?.();
-    }, 200);
+  win.once("ready-to-show", () => {
+    if (win && !win.isDestroyed()) { win.show(); app.focus({ steal: true }); win.focus(); }
   });
   win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
   win.webContents.on("unresponsive", () => console.log("[ОКНО ЗАВИСЛО]"));
   win.webContents.on("render-process-gone", (_e, d) => console.log("[renderer упал]", d?.reason));
   win.on("close", (e) => { if (!app.isQuitting) { e.preventDefault(); win.hide(); } });
+};
+
+// пересоздать окно начисто (свежая поверхность) — авто на старте и вручную из трея при пустом экране
+const recreateWindow = async () => {
+  const cfg = await loadConfig();
+  const old = win;
+  createWindow(cfg, true);   // isHeal=true → без повторного авто-пересоздания
+  if (old && !old.isDestroyed()) old.destroy();
+};
+
+// видна ли часть окна хоть на одном экране
+const winOnScreen = () => {
+  if (!win || win.isDestroyed()) return false;
+  const b = win.getBounds();
+  return screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+};
+
+// вернуть окно по центру основного экрана (фикс «уехало за экран»)
+const recenter = () => {
+  if (!win || win.isDestroyed()) return;
+  const a = screen.getPrimaryDisplay().workArea;
+  const b = win.getBounds();
+  win.setBounds({ x: Math.round(a.x + (a.width - b.width) / 2), y: Math.round(a.y + (a.height - b.height) / 2), width: b.width, height: b.height });
+};
+
+// показать окно (из трея/дока): на экран + видимым
+const showWindow = () => {
+  if (!win || win.isDestroyed()) return;
+  if (!winOnScreen()) recenter();
+  win.show();
+  win.focus();
 };
 
 const updateTray = () => {
@@ -119,7 +154,8 @@ const updateTray = () => {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: status, enabled: false },
     { type: "separator" },
-    { label: "Открыть окно", click: () => { win.show(); } },
+    { label: "Открыть окно", click: () => showWindow() },
+    { label: "🔄 Перерисовать окно (если пустой экран)", click: () => recreateWindow() },
     { label: "Выход", click: () => { app.isQuitting = true; app.quit(); } },
   ]));
 };
@@ -168,16 +204,118 @@ ipcMain.handle("update:install", async () => {
   }
   app.isQuitting = true; autoUpdater.quitAndInstall();
 });
+// единый счётчик баланса/остатка по ключу для разных сервисов
+ipcMain.handle("quota:check", async (_e, { service, key } = {}) => {
+  const k = (key || "").trim();
+  if (!k) return { ok: false, error: "нет ключа" };
+  const sig = () => AbortSignal.timeout(15000);
+  try {
+    if (service === "elevenlabs") {
+      // ~1000 символов ≈ 1 минута озвучки
+      const r = await fetch("https://api.elevenlabs.io/v1/user/subscription", { headers: { "xi-api-key": k }, signal: sig() });
+      if (!r.ok) return { ok: false, error: `ошибка ${r.status}` };
+      const d = await r.json();
+      const left = Math.max(0, (d.character_limit || 0) - (d.character_count || 0));
+      const mins = Math.round(left / 1000);
+      return { ok: true, text: `≈ ${mins} мин озвучки (${left.toLocaleString("ru-RU")} симв.)` };
+    }
+    if (service === "kie") {
+      // Veo 3 Fast ≈ 100 кредитов за клип 8с
+      const r = await fetch("https://api.kie.ai/api/v1/chat/credit", { headers: { Authorization: `Bearer ${k}` }, signal: sig() });
+      if (!r.ok) return { ok: false, error: `ошибка ${r.status}` };
+      const d = await r.json();
+      if (d.code && d.code !== 200) return { ok: false, error: d.msg || `код ${d.code}` };
+      const c = typeof d.data === "number" ? d.data : (d.data?.credits ?? d.data);
+      const clips = Math.floor((Number(c) || 0) / 100);
+      const text = clips >= 1 ? `${c} кр. ≈ ${clips} клип${clips === 1 ? "" : clips < 5 ? "а" : "ов"} Veo` : `${c} кр. (на клип Veo нужно ~100 — пополни)`;
+      return { ok: true, text };
+    }
+    if (service === "heygen") {
+      // remaining_quota/60 ≈ кредиты HeyGen ≈ минуты аватара
+      const r = await fetch("https://api.heygen.com/v2/user/remaining_quota", { headers: { "X-Api-Key": k }, signal: sig() });
+      if (!r.ok) return { ok: false, error: `ошибка ${r.status}` };
+      const d = await r.json();
+      const q = d?.data?.remaining_quota ?? d?.remaining_quota;
+      if (q == null) return { ok: false, error: "нет данных" };
+      return { ok: true, text: `≈ ${Math.round(q / 60)} мин аватара` };
+    }
+    if (service === "openai") {
+      // у OpenAI нет публичного эндпоинта баланса по ключу — проверяем рабочесть
+      const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${k}` }, signal: sig() });
+      if (r.ok) return { ok: true, text: "ключ рабочий (баланс — на сайте OpenAI)" };
+      if (r.status === 401) return { ok: false, error: "неверный ключ" };
+      return { ok: false, error: `ошибка ${r.status}` };
+    }
+    if (service === "pexels") {
+      // бесплатный сток — лимит запросов в месяц
+      const r = await fetch("https://api.pexels.com/videos/search?query=office&per_page=1", { headers: { Authorization: k }, signal: sig() });
+      if (!r.ok) return { ok: false, error: `ошибка ${r.status}` };
+      const rem = r.headers.get("X-Ratelimit-Remaining");
+      const lim = r.headers.get("X-Ratelimit-Limit");
+      if (rem == null) return { ok: true, text: "ключ рабочий (сток)" };
+      return { ok: true, text: `${rem}${lim ? "/" + lim : ""} запросов к стоку` };
+    }
+    return { ok: false, error: "неизвестный сервис" };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// --- референс → стиль-шаблон ---
+ipcMain.handle("reference:analyze", async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Видео", extensions: ["mp4", "mov", "m4v", "webm", "mkv"] }] });
+  if (r.canceled || !r.filePaths[0]) return { ok: true, canceled: true };
+  const cfg = await loadConfig();
+  try {
+    const profile = await analyzeReference({ videoPath: r.filePaths[0], openaiKey: cfg.openaiKey || null, onProgress: (p) => toRenderer("ref:progress", p) });
+    return { ok: true, profile };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// вырезать выбранные куски референса (по таймкодам) и добавить в «Мой контент» (биролы)
+ipcMain.handle("reference:extractClips", async (_e, { sourcePath, times = [], project = "" } = {}) => {
+  if (!sourcePath || !times.length) return { ok: false, error: "нет выбранных кадров" };
+  try {
+    const dir = project ? path.join(P.videos, project) : P.videos;
+    await fs.mkdir(dir, { recursive: true });
+    let added = 0;
+    for (let i = 0; i < times.length; i += 1) {
+      const t = Math.max(0, Number(times[i]) - 1);
+      const out = path.join(dir, `ref-${Date.now()}-${i}.mp4`);
+      try {
+        await runFfmpeg([
+          "-y", "-ss", t.toFixed(2), "-i", sourcePath, "-t", "3", "-an",
+          "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1,fps=30",
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out,
+        ], { label: "ref-clip" });
+        added += 1;
+      } catch {}
+    }
+    return added ? { ok: true, added } : { ok: false, error: "не удалось вырезать (файл-исходник доступен?)" };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("templates:list", async () => listTemplates(app.getPath("userData")));
+ipcMain.handle("templates:save", async (_e, profile) => saveTemplate(app.getPath("userData"), profile));
+ipcMain.handle("templates:delete", async (_e, id) => deleteTemplate(app.getPath("userData"), id));
+ipcMain.handle("templates:setActive", async (_e, id) => { const c = await loadConfig(); c.activeTemplate = id || ""; await saveConfig(c); return true; });
 ipcMain.handle("config:get", async () => loadConfig());
 ipcMain.handle("config:save", async (_e, cfg) => { await saveConfig(cfg); restartBot().catch(() => {}); return true; }); // бот стартует в фоне — не подвешиваем окно
 ipcMain.handle("telegram:validate", async (_e, token) => {
   try { const me = await validateToken(token); return { ok: true, username: me.username }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
-ipcMain.handle("video:create", async (_e, script) => {
-  toRenderer("job:start", { source: "app", text: script });
+ipcMain.handle("audio:saveRecording", async (_e, bytes) => {
   try {
-    const r = await makeVideo(script, (p) => toRenderer("job:progress", p));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "voice-"));
+    const raw = path.join(dir, "rec.webm");
+    await fs.writeFile(raw, Buffer.from(bytes));
+    // webm от MediaRecorder без длительности в заголовке → перегоняем в WAV (правильная длина + чистый PCM)
+    const wav = path.join(dir, "voiceover.wav");
+    try { await runFfmpeg(["-y", "-i", raw, "-ar", "44100", "-ac", "1", wav], { label: "rec-wav" }); return wav; }
+    catch { return raw; }
+  } catch { return null; }
+});
+ipcMain.handle("video:create", async (_e, script, opts = {}) => {
+  toRenderer("job:start", { source: "app", text: script || "своя озвучка" });
+  try {
+    const r = await makeVideo(script, (p) => toRenderer("job:progress", p), { voiceAudioPath: opts?.voiceAudioPath || null, voiceEnhance: !!opts?.voiceEnhance });
+    // (transitionSfx берётся из config внутри makeVideo)
     // отправляем готовое и в Telegram (если бот настроен и есть чат)
     const cfg = await loadConfig();
     if (cfg.telegramToken && cfg.telegramChatId) {
@@ -336,12 +474,22 @@ ipcMain.handle("video:meta:set", async (_e, p, patch) => {
   return { ok: true };
 });
 
+// чистим GPU/shader-кэш при старте — битый кэш = белый экран (защита от повторения)
+const clearGpuCache = () => {
+  const base = app.getPath("userData");
+  for (const d of ["GPUCache", "Code Cache", "DawnCache", "DawnGraphiteCache", "GrShaderCache", "ShaderCache"]) {
+    try { rmSync(path.join(base, d), { recursive: true, force: true }); } catch {}
+  }
+};
+
 app.whenReady().then(async () => {
   await ensureFolders(P);
-  createWindow();
+  const cfg = await loadConfig();
+  createWindow(cfg);
   createTray();
-  setupAutoUpdate();
-  await restartBot();
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else win.show(); });
+  // ТЯЖЁЛЫЙ старт (Telegram long-polling + автообновление) ОТКЛАДЫВАЕМ — иначе сетевые запросы
+  // в main срывают первый вывод окна (пустой экран). Сначала окно рисуется, потом стартуем бота.
+  setTimeout(() => { setupAutoUpdate(); restartBot().catch(() => {}); }, 2000);
+  app.on("activate", async () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(await loadConfig()); else showWindow(); });
 });
 app.on("window-all-closed", () => { /* живём в трее */ });

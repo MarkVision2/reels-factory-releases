@@ -7,12 +7,13 @@ import { fileURLToPath } from "node:url";
 import { generateVideo } from "./src/pipeline.js";
 import { TelegramBot, validateToken, sendMessage, sendDocument, getFileLink } from "./src/telegram.js";
 import electronUpdater from "electron-updater";
-import { paths, ensureFolders, readMeta, writeMeta, listProjects, createProject } from "./src/local-content.js";
+import { paths, ensureFolders, readMeta, writeMeta, listProjects, createProject, readProjectBrief, writeProjectBrief } from "./src/local-content.js";
 import { thumbDataUrl } from "./src/thumbs.js";
 import { runFfmpeg } from "./src/render-core.js";
 import { analyzeReference } from "./src/reference.js";
 import { listTemplates, saveTemplate, deleteTemplate, getTemplate } from "./src/templates.js";
 import { transcribeAudio } from "./src/stt.js";
+import { testFreedom, listFreedomVoices } from "./src/freedom-tts.js";
 
 const { autoUpdater } = electronUpdater;
 const P = paths();
@@ -23,6 +24,8 @@ const CONFIG_PATH = path.join(app.getPath("userData"), "config.json");
 const FONT_PATH = path.join(app.getPath("userData"), "brand-font.ttf");
 const DEFAULT_CONFIG = {
   elevenKey: "", voiceId: "IKne3meq5aSn9XLyUdCD", openaiKey: "", pexelsKey: "",
+  freedomKey: "", voiceProvider: "elevenlabs", freedomVoice: "tomiris", freedomEmotion: "neutral", freedomLanguage: "",
+  freedomClone: false, freedomCloneRef: "",
   telegramToken: "", musicUrl: "", musicVolume: 0.05,
   genProvider: "none", falKey: "", falModel: "kling", genMax: 2, kieKey: "", kieModel: "veo3_fast",
   fontPath: "", fontName: "", accentColor: "#42C8F5",
@@ -30,6 +33,7 @@ const DEFAULT_CONFIG = {
   activeProject: "", telegramChatId: "",
   videoMode: "faceless", heygenKey: "", heygenAvatarId: "", heygenVoiceId: "",
   theme: "dark", transitionSfx: false, activeTemplate: "",
+  remotionOverlay: false, remotionCaptions: true, ctaLines: [], ctaButton: "", ctaUrgency: "",
 };
 
 let win = null, tray = null, bot = null, botInfo = null, latestVersion = null;
@@ -258,6 +262,27 @@ ipcMain.handle("quota:check", async (_e, { service, key } = {}) => {
     return { ok: false, error: "неизвестный сервис" };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+// Freedom Speech: проверка ключа + предпрослушка голоса
+ipcMain.handle("freedom:test", async (_e, { key, voice, emotion } = {}) =>
+  testFreedom({ apiKey: (key || "").trim(), voice, emotion }));
+// Freedom Speech: живой список голосов с сервера
+ipcMain.handle("freedom:voices", async () => listFreedomVoices());
+// Freedom Speech: выбрать образец голоса для клонирования (копируем в userData, чтобы не потерялся)
+ipcMain.handle("freedom:pickClone", async () => {
+  const r = await dialog.showOpenDialog(win, {
+    properties: ["openFile"],
+    filters: [{ name: "Аудио", extensions: ["wav", "mp3", "m4a", "ogg", "webm", "flac"] }],
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: true, canceled: true };
+  try {
+    const src = r.filePaths[0];
+    const ext = path.extname(src) || ".wav";
+    const dest = path.join(app.getPath("userData"), `voice-ref${ext}`);
+    await fs.copyFile(src, dest);
+    return { ok: true, path: dest, name: path.basename(src) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // --- референс → стиль-шаблон ---
 ipcMain.handle("reference:analyze", async () => {
   const r = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Видео", extensions: ["mp4", "mov", "m4v", "webm", "mkv"] }] });
@@ -314,7 +339,10 @@ ipcMain.handle("audio:saveRecording", async (_e, bytes) => {
 ipcMain.handle("video:create", async (_e, script, opts = {}) => {
   toRenderer("job:start", { source: "app", text: script || "своя озвучка" });
   try {
-    const r = await makeVideo(script, (p) => toRenderer("job:progress", p), { voiceAudioPath: opts?.voiceAudioPath || null, voiceEnhance: !!opts?.voiceEnhance });
+    const extra = { voiceAudioPath: opts?.voiceAudioPath || null, voiceEnhance: !!opts?.voiceEnhance };
+    if (opts?.freedomVoice) extra.freedomVoice = opts.freedomVoice;   // override голоса на это видео
+    if (opts?.freedomEmotion) extra.freedomEmotion = opts.freedomEmotion;
+    const r = await makeVideo(script, (p) => toRenderer("job:progress", p), extra);
     // (transitionSfx берётся из config внутри makeVideo)
     // отправляем готовое и в Telegram (если бот настроен и есть чат)
     const cfg = await loadConfig();
@@ -332,7 +360,7 @@ ipcMain.handle("video:createOwn", async () => {
   toRenderer("job:start", { source: "app", text: "своё видео: " + r.filePaths[0].split("/").pop() });
   try {
     const cfg = await loadConfig();
-    const rr = await generateVideo({ script: "", config: { ...cfg, videoMode: "ownvideo", sourceVideo: r.filePaths[0] }, onProgress: (p) => toRenderer("job:progress", p) });
+    const rr = await generateVideo({ script: "", config: { ...cfg, videoMode: cfg.videoMode === "dynamic" ? "dynamic" : "ownvideo", sourceVideo: r.filePaths[0] }, onProgress: (p) => toRenderer("job:progress", p) });
     if (cfg.telegramToken && cfg.telegramChatId) sendDocument(cfg.telegramToken, cfg.telegramChatId, rr.outPath, "Готово ✅").catch(() => {});
     toRenderer("job:done", { outPath: rr.outPath, source: "app" });
     return { ok: true, outPath: rr.outPath, sentToTg: !!(cfg.telegramToken && cfg.telegramChatId) };
@@ -412,9 +440,9 @@ ipcMain.handle("projects:list", async () => {
   const cfg = await loadConfig();
   return { projects: await listProjects(P), active: cfg.activeProject || "" };
 });
-ipcMain.handle("projects:create", async (_e, name) => {
+ipcMain.handle("projects:create", async (_e, name, brief = null) => {
   try {
-    const clean = await createProject(name, P);
+    const clean = await createProject(name, P, brief);
     const cfg = await loadConfig(); cfg.activeProject = clean; await saveConfig(cfg);
     return { ok: true, name: clean };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -422,6 +450,11 @@ ipcMain.handle("projects:create", async (_e, name) => {
 ipcMain.handle("projects:setActive", async (_e, name) => {
   const cfg = await loadConfig(); cfg.activeProject = name || ""; await saveConfig(cfg);
   return { ok: true };
+});
+ipcMain.handle("projects:getBrief", async (_e, name) => readProjectBrief(name, P));
+ipcMain.handle("projects:setBrief", async (_e, name, brief) => {
+  try { const saved = await writeProjectBrief(name, brief, P); return { ok: true, brief: saved }; }
+  catch (e) { return { ok: false, error: e.message }; }
 });
 
 // брендбук: загрузить свой шрифт для титров

@@ -12,11 +12,22 @@ export const ffmpegPath = String(ffmpegStatic || "").replace("app.asar", "app.as
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = (...a) => console.log("[render]", ...a);
 
-export const downloadTo = async (url, destPath) => {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Download ${url} failed: ${res.status}`);
-  await fs.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
-  return (await fs.stat(destPath)).size;
+export const downloadTo = async (url, destPath, tries = 3) => {
+  let lastErr;
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      await fs.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+      const sz = (await fs.stat(destPath)).size;
+      if (sz < 1000) throw new Error("файл пустой");
+      return sz;
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1))); // бэкофф перед ретраем
+    }
+  }
+  throw new Error(`Download ${url} failed: ${lastErr?.message || lastErr}`);
 };
 
 export const runFfmpeg = (args, { label = "ffmpeg", env } = {}) =>
@@ -64,28 +75,76 @@ export const AVOID_SLUG = [
   "bitcoin", "forex", "candlestick", "investment", "robot-toy", "toy", "drone",
 ];
 
-export const pickPexelsVideo = async (query, key, used = new Set(), mustWords = []) => {
+// Vision-проверка внешности по постер-кадру Pexels (GPT-4o). true = можно, false = отбраковать.
+// Нет ключа / ошибка API → true (не блокируем пайплайн).
+const visionAllowedAppearance = async (imageUrl, openaiKey) => {
+  if (!openaiKey || !imageUrl) return true;
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o", temperature: 0, max_tokens: 12,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: [
+          { type: "text", text: 'Осмотри ВСЕХ людей в кадре (включая задний план, группу, толпу). Есть ли ХОТЬ ОДИН человек african/black/тёмнокожий, indian, восточноазиатской или ближневосточной внешности? Допустимы ТОЛЬКО европейская и среднеазиатская внешность. Если есть хоть один неподходящий ИЛИ сомневаешься — верни {"ok":false}. Если людей нет вообще — {"ok":true}. Ответь СТРОГО JSON {"ok":true|false}.' },
+          { type: "image_url", image_url: { url: imageUrl, detail: "high" } },
+        ] }],
+      }),
+    });
+    if (!res.ok) return true;
+    const j = JSON.parse((await res.json()).choices[0].message.content);
+    return j.ok !== false;
+  } catch { return true; }
+};
+
+const shuffleArr = (arr) => {
+  const a = arr.slice();
+  for (let k = a.length - 1; k > 0; k -= 1) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; }
+  return a;
+};
+
+export const pickPexelsVideo = async (query, key, used = new Set(), mustWords = [], openaiKey = null) => {
   if (!key) return null;
   const must = (mustWords || []).map((w) => String(w).toLowerCase()).filter(Boolean);
-  const url = `https://api.pexels.com/videos/search?per_page=20&orientation=portrait&query=${encodeURIComponent(query)}`;
+  // БЕЗ жёсткой ориентации: портретного стока по узким темам (медицина и т.п.) мало → берём и
+  // ландшафт (движок впишет его с размытым фоном, fit). Больше кандидатов = больше уникальных.
+  const url = `https://api.pexels.com/videos/search?per_page=60&query=${encodeURIComponent(query)}`;
   const res = await fetch(url, { headers: { Authorization: key } });
   if (!res.ok) return null;
   const data = await res.json();
   const pickFile = (v) => {
-    const files = (v.video_files || [])
-      .filter((f) => f.height >= 1280 && f.width <= 1080)
-      .sort((a, b) => a.width - b.width);
-    return files[0] || null;
+    const files = (v.video_files || []).filter((f) => f.height >= 720);
+    // предпочитаем натуральный портрет, иначе — ландшафт/квадрат. В ОБОИХ случаях fit:false →
+    // клип КРОПАЕТСЯ в полный кадр 9:16 (заполняет вертикаль целиком, без полос/блюра; бока
+    // горизонтального клипа обрезаются — «чётко ложится», как в обычных reels).
+    const portrait = files.filter((f) => f.height > f.width && f.width <= 1200).sort((a, b) => a.width - b.width);
+    if (portrait.length) return { link: portrait[0].link, fit: false };
+    // для ландшафта берём кадр повыше (≥1080 по высоте если есть) — чтобы после кропа не мылил
+    const land = files.filter((f) => f.width <= 2560).sort((a, b) => b.height - a.height);
+    const f = land[0] || files.sort((a, b) => b.height - a.height)[0];
+    return f ? { link: f.link, fit: false } : null;
   };
+  // собираем ВСЕ подходящие (по slug-фильтрам), сохраняем постер для Vision-проверки
+  const eligible = [];
   for (const v of data.videos || []) {
     if (used.has(v.id)) continue;
     const slug = String(v.url || "").toLowerCase();
     if (AVOID_SLUG.some((w) => slug.includes(w))) continue;
     if (must.length && !must.some((w) => slug.includes(w))) continue;
     const f = pickFile(v);
-    if (f) return { id: v.id, url: f.link, slug };
+    if (f) eligible.push({ id: v.id, url: f.link, fit: f.fit, slug, image: v.image });
   }
-  return null;
+  if (!eligible.length) return null;
+  const shuffled = shuffleArr(eligible);
+  // без ключа OpenAI — прежнее поведение (случайный из подходящих)
+  if (!openaiKey) return shuffled[0];
+  // с ключом — Vision-проверка внешности по постеру до первого подходящего (кап 6 проверок ≈ контроль расхода)
+  const MAX_CHECKS = 6;
+  for (let i = 0; i < shuffled.length && i < MAX_CHECKS; i += 1) {
+    if (await visionAllowedAppearance(shuffled[i].image, openaiKey)) return shuffled[i];
+  }
+  return null; // все отбракованы → вызывающий возьмёт безопасный каталожный клип
 };
 
 // --- ASS-титры со вшитым шрифтом (libass без fontconfig) ---
@@ -120,8 +179,11 @@ const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor
   // позиция титров (из шаблона): низ / центр / верх
   const align = position === "center" ? 5 : position === "top" ? 8 : 2;
   const marginV = position === "center" ? 0 : position === "top" ? Math.round(outH * 0.16) : Math.round(outH * 0.23);
-  // активное слово: цвет-акцент + резкий поп (заброс масштаба → оседание) + толстый контур = «панч»
-  const pop = `{\\1c${accent}\\fscx116\\fscy116\\bord8\\t(0,70,\\fscx104\\fscy104)\\t(70,140,\\bord6)}`;
+  // АКТИВНОЕ слово: подсветка ТОЛЬКО цветом-акцентом (размер НЕ меняется → строка не прыгает и
+  // не расплывается), с плавным входом цвета за 90мс. Спокойное караоке, а не «скачки».
+  const pop = `{\\1c&H00FFFFFF&\\t(0,90,\\1c${accent})}`;
+  // НЕактивные слова: обычные белые, ТОТ ЖЕ размер (никакого reflow строки).
+  const dim = ``;
   const dlg = [];
   // ПО СЛОВАМ глобально: каждое слово показывается строго до начала следующего (без наложений)
   for (let k = 0; k < words.length; k += 1) {
@@ -137,11 +199,12 @@ const buildAss = (words, { outH = 1920, fontEncoded, chunkWords = 2, accentColor
       const txt = clean(ww.w);
       if (!txt) return;
       if (chunkStart + idx === k) { parts.push(`${pop}${txt}{\\r}`); activeOk = true; }
-      else parts.push(txt);
+      else parts.push(`${dim}${txt}{\\r}`);
     });
     if (!activeOk || !parts.length) continue;
-    const fade = (k === chunkStart) ? "{\\fad(90,0)}" : "";
-    dlg.push(`Dialogue: 0,${tcAss(st)},${tcAss(en)},Default,,0,0,0,,${fade}${parts.join(" ")}`);
+    // новый чанк въезжает лёгким фейдом (движение даёт «кик» слова — работает при любой позиции)
+    const intro = (k === chunkStart) ? "{\\fad(130,0)}" : "";
+    dlg.push(`Dialogue: 0,${tcAss(st)},${tcAss(en)},Default,,0,0,0,,${intro}${parts.join(" ")}`);
   }
   const header = [
     "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
@@ -176,7 +239,7 @@ const loadFont = async (workDir, customPath = null) => {
 
 // --- ЛОКАЛЬНАЯ faceless-склейка: клипы по сегментам + голос + музыка + титры ---
 // segments: [{start,end,text, clip_path | clip_url, fit?, in?}], voicePath, words[], musicPath?
-export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, sfxPaths = [], fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, outPath }) => {
+export const renderFaceless = async ({ workDir, segments, voicePath, words = [], musicPath = null, musicVolume = 0.05, sfxPaths = [], fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, captionMode = "ass", outPath }) => {
   const D = await ffprobeDuration(voicePath);
   if (!segments.length) throw new Error("нет сегментов");
 
@@ -193,12 +256,29 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   }
   if (!clips.length) throw new Error("не удалось скачать ни одного клипа");
 
+  // СТРАХОВКА ДЛИНЫ: видеоряд ОБЯЗАН покрыть всю озвучку. Если таймкоды слов короче реального
+  // аудио — добираем ХВОСТ РАЗНЫМИ клипами по кругу (кусками ~3.5с), НЕ зацикливаем один клип
+  // (иначе последний бирол повторяется по кругу — назойливо). Каждый следующий ≠ предыдущему.
+  const totalVideoDur = clips.reduce((s, c) => s + c.dur, 0);
+  if (totalVideoDur < D - 0.4 && clips.length) {
+    const pool = clips.map((c) => c.path);
+    let remain = D - totalVideoDur, ptr = 0, prev = clips[clips.length - 1].path, added = 0;
+    while (remain > 0.4) {
+      let pick = pool[ptr % pool.length]; ptr += 1;
+      if (pool.length > 1 && pick === prev) { pick = pool[ptr % pool.length]; ptr += 1; }
+      const seg = Math.min(remain, 3.5);
+      clips.push({ path: pick, dur: Math.max(1.2, seg), fit: false, in: 0 });
+      prev = pick; remain -= seg; added += 1;
+    }
+    log(`tail filled with ${added} varied clips (${(D - totalVideoDur).toFixed(1)}s)`);
+  }
+
   // титры (ASS + вшитый шрифт)
   const font = await loadFont(workDir, fontPath);
   const assPath = path.join(workDir, "cap.ass");
   let hasCaps = false;
   let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
-  if (font && words.length) {
+  if (font && words.length && captionMode === "ass") {
     await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor, position: capPosition, sizePct: capSize }));
     const fontDir = path.dirname(font.path);
     const fontsConf = path.join(workDir, "fonts.conf");
@@ -240,11 +320,16 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
         `[${i}:v]split=2[bg${i}][fg${i}];` +
         `[bg${i}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bgb${i}];` +
         `[fg${i}]scale=1080:1920:force_original_aspect_ratio=decrease[fgs${i}];` +
-        `[bgb${i}][fgs${i}]overlay=(W-w)/2:(H-h)/2,fps=30,setsar=1,trim=0:${L},setpts=PTS-STARTPTS[c${i}]`,
+        `[bgb${i}][fgs${i}]overlay=(W-w)/2:(H-h)/2,fps=30,setsar=1,` +
+        `zoompan=z='1.0+if(lt(on,5),0.16*(1-on/5),0)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,` +
+        `trim=0:${L},setpts=PTS-STARTPTS[c${i}]`,
       );
     } else {
       const rate = (0.20 / Math.max(1, Math.round(c.dur * 30))).toFixed(6);
-      const z = i % 2 === 0 ? `min(1.0+${rate}*on,1.20)` : `max(1.20-${rate}*on,1.0)`;
+      const drift = i % 2 === 0 ? `min(1.0+${rate}*on,1.20)` : `max(1.20-${rate}*on,1.0)`;
+      // PUNCH-IN: резкий зум-наезд в первые 5 кадров каждого клипа → динамичный «удар» на склейке
+      const punch = `if(lt(on,5),0.20*(1-on/5),0)`;
+      const z = `${drift}+${punch}`;
       filter.push(
         `[${i}:v]scale=1296:2304:force_original_aspect_ratio=increase,crop=1296:2304,setsar=1,` +
         `zoompan=z='${z}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,` +
@@ -254,7 +339,8 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
   });
   // склейка (БЕЗ xfade — он ломает рендер на ffmpeg 7.1)
   filter.push(`${clips.map((_, i) => `[c${i}]`).join("")}concat=n=${clips.length}:v=1:a=0[cat]`);
-  filter.push(`[cat]unsharp=3:3:0.5:3:3:0.0[gr]`);
+  // сочность + резкость: лёгкий контраст/насыщенность + чёткость для «динамичной» картинки
+  filter.push(`[cat]eq=contrast=1.07:saturation=1.14:brightness=0.01,unsharp=5:5:0.8:3:3:0.0[gr]`);
   let vlabel = "gr";
   if (hasCaps) {
     const escAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
@@ -275,7 +361,7 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
     filter.push(`${mixIns}amix=inputs=${sfxInputs.length + 1}:normalize=0:dropout_transition=0[aout]`);
   }
   args.push("-filter_complex", filter.join(";"), "-map", `[${vlabel}]`, "-map", "[aout]");
-  args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
+  args.push("-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p",
     "-movflags", "+faststart", "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-t", String(D), outPath);
 
   await runFfmpeg(args, { label: "faceless", env: fcEnv });
@@ -284,13 +370,13 @@ export const renderFaceless = async ({ workDir, segments, voicePath, words = [],
 
 // РЕЖИМ АВАТАР: видео HeyGen (со звуком) → 1080x1920 + биролы-перебивки + титры + музыка (duck).
 // inserts: [{start,end,path}] — клипы, накладываются поверх аватара в свои окна (звук аватара не трогаем).
-export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, outPath }) => {
+export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = [], musicPath = null, musicVolume = 0.05, fontPath = null, accentColor = null, capPosition = "bottom", capSize = 5.2, captionMode = "ass", outPath }) => {
   const D = await ffprobeDuration(avatarPath);
   const font = await loadFont(workDir, fontPath);
   const assPath = path.join(workDir, "cap.ass");
   let hasCaps = false;
   let fcEnv = { HOME: workDir, XDG_CACHE_HOME: workDir };
-  if (font && words.length) {
+  if (font && words.length && captionMode === "ass") {
     await fs.writeFile(assPath, buildAss(words, { outH: 1920, fontEncoded: assEncodeFont(font.buf), accentColor, position: capPosition, sizePct: capSize }));
     const fontDir = path.dirname(font.path);
     const fontsConf = path.join(workDir, "fonts.conf");
@@ -305,7 +391,9 @@ export const renderAvatar = async ({ workDir, avatarPath, words = [], inserts = 
   if (musicPath) { args.push("-stream_loop", "-1", "-i", musicPath); musicIdx = 1 + ins.length; }
 
   const filter = [];
-  filter.push(`[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1[base]`);
+  // База: лёгкий «дышащий» зум (1.06↔1.11), чтобы «голова» не была статичной.
+  // Запас по разрешению (1188×2112) — наезд без потери чёткости. Без слепых панчей (не режем лицо).
+  filter.push(`[0:v]scale=1188:2112:force_original_aspect_ratio=increase,crop=1188:2112,setsar=1,fps=30,zoompan=z='1.06+0.05*sin(on/75)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30[base]`);
   // биролы-перебивки: каждый клип поверх аватара в своё окно времени
   let prev = "base";
   ins.forEach((s, k) => {

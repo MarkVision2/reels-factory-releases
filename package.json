@@ -1,6 +1,6 @@
 {
   "name": "reels-factory-desktop",
-  "version": "0.1.15",
+  "version": "0.1.30",
   "description": "AI Reels Factory — настольное приложение (ТЗ → видео с озвучкой), полностью локальный рендер",
   "author": "MarkVision",
   "main": "main.js",
@@ -11,8 +11,14 @@
     "dist": "electron-builder"
   },
   "dependencies": {
+    "@fontsource/montserrat": "^5.2.8",
+    "@remotion/bundler": "^4.0.482",
+    "@remotion/renderer": "^4.0.482",
     "electron-updater": "^6.8.9",
-    "ffmpeg-static": "^5.3.0"
+    "ffmpeg-static": "^5.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "^4.0.482"
   },
   "devDependencies": {
     "electron": "^42.4.1",
@@ -21,15 +27,24 @@
   "build": {
     "appId": "kz.markvision.reelsfactory",
     "productName": "AI Reels Factory",
+    "beforeBuild": "scripts/before-build.cjs",
     "files": [
       "main.js",
       "preload.cjs",
       "src/**",
       "renderer/**",
-      "assets/**"
+      "assets/**",
+      "remotion/**",
+      "remotion-bundle/**",
+      "tsconfig.json"
     ],
     "asarUnpack": [
-      "node_modules/ffmpeg-static/**"
+      "node_modules/ffmpeg-static/**",
+      "node_modules/@remotion/**",
+      "node_modules/remotion/**",
+      "node_modules/esbuild/**",
+      "node_modules/@esbuild/**",
+      "remotion-bundle/**"
     ],
     "mac": {
       "target": [

@@ -70,10 +70,16 @@ select option { background: var(--panel); color: var(--txt); }
 .row { display: flex; align-items: center; gap: 16px; margin-top: 18px; }
 
 /* project bar */
-.project-bar { display: flex; align-items: center; gap: 10px; margin: 2px 0 16px; font-size: 14px; color: var(--mut); flex-wrap: wrap; }
+.project-bar { display: flex; align-items: center; gap: 12px 22px; margin: 2px 0 16px; font-size: 14px; color: var(--mut); flex-wrap: wrap; }
 .project-bar select { background: var(--panel); border: 1px solid var(--line); color: var(--txt); border-radius: var(--r-sm); padding: 8px 28px 8px 11px; font-size: 13.5px; min-width: 150px; cursor: pointer; box-shadow: var(--shadow-sm); }
-.project-bar #projNew { background: var(--panel); color: var(--txt); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 13px; cursor: pointer; font-size: 13px; box-shadow: var(--shadow-sm); transition: background .14s; }
-.project-bar #projNew:hover { background: var(--hover); }
+.project-bar #projNew, .project-bar #projEdit { background: var(--panel); color: var(--txt); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 13px; cursor: pointer; font-size: 13px; box-shadow: var(--shadow-sm); transition: background .14s; }
+.project-bar #projNew:hover, .project-bar #projEdit:hover { background: var(--hover); }
+.project-bar #projEdit:disabled { opacity: .4; cursor: default; }
+/* пары «ярлык+контрол» переносятся как единое целое — Режим не отрывается от селекта */
+.pb-group { display: inline-flex; align-items: center; gap: 10px; }
+.pb-label { white-space: nowrap; color: var(--mut); font-weight: 510; }
+#videoMode { min-width: 246px; font-weight: 510; }
+#videoMode.mode-hot { border-color: var(--acc); box-shadow: 0 0 0 2px var(--acc-soft); }
 
 /* buttons */
 button.primary { background: var(--acc); color: #fff; border: 0; padding: 12px 22px; border-radius: var(--r-sm); font-size: 14.5px; font-weight: 600; cursor: pointer; box-shadow: var(--accbtn-shadow); transition: filter .15s, transform .08s; }
@@ -130,6 +136,7 @@ button.ghost:hover { background: var(--hover); }
 .modal-card h3 { font-size: 17px; font-weight: 650; margin-bottom: 16px; }
 .modal-card input, .modal-card textarea { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--txt); padding: 11px 13px; font-size: 14px; margin-bottom: 12px; }
 .modal-card textarea { height: 92px; resize: vertical; }
+.modal-hint { font-size: 12.5px; color: var(--mut); margin: -4px 0 14px; line-height: 1.4; }
 .modal-actions { display: flex; gap: 10px; }
 .modal-actions .ghost { padding: 10px 18px; }
 

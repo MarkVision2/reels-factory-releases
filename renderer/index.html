@@ -32,6 +32,34 @@
     </div>
   </div>
 
+  <!-- МОДАЛКА ВВОДА ИМЕНИ (новый проект / новая папка) -->
+  <div class="modal" id="nameModal" hidden>
+    <div class="modal-card">
+      <h3 id="nmTitle">Новый проект</h3>
+      <input id="nmInput" type="text" placeholder="Название" autocomplete="off" />
+      <p id="nmHint" class="modal-hint">Папка создастся в «Мои видео» — потом сложи туда видео, фото и музыку.</p>
+      <div class="modal-actions">
+        <button class="primary" id="nmOk">Создать</button>
+        <button class="ghost" id="nmCancel">Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- МОДАЛКА ПРОЕКТА (создание / настройка брифа) -->
+  <div class="modal" id="projModal" hidden>
+    <div class="modal-card">
+      <h3 id="pmHead">Новый проект</h3>
+      <input id="pmName" type="text" placeholder="Название проекта" autocomplete="off" />
+      <textarea id="pmNiche" placeholder="Ниша / направление — что продаём и кого ищем. Напр.: «Ремонт квартир под ключ в Астане, ищем частных заказчиков на большие объекты»"></textarea>
+      <input id="pmCta" type="text" placeholder="Призыв (CTA) на плашке в конце — напр.: Запишись на бесплатный замер →" autocomplete="off" />
+      <p class="modal-hint">Ниша управляет подбором биролов и заточкой ролика под поиск клиентов. Призыв ставится на финальную плашку (если не задан свой в настройках).</p>
+      <div class="modal-actions">
+        <button class="primary" id="pmSave">Создать проект</button>
+        <button class="ghost" id="pmCancel">Отмена</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ВИЗАРД ПЕРВОГО ЗАПУСКА -->
   <div class="wizard" id="wizard" hidden>
     <div class="wiz-card">
@@ -85,15 +113,21 @@
     <section class="tab active" id="tab-create">
       <h1>Создать видео из сценария</h1>
       <div class="project-bar">
-        <span>Проект:</span>
-        <select id="projSel"></select>
-        <button id="projNew">＋ Новый проект</button>
-        <span style="margin-left:14px">Режим:</span>
-        <select id="videoMode">
-          <option value="faceless">🎙️ С озвучкой (биролы)</option>
-          <option value="avatar">🧑‍💼 Аватар HeyGen</option>
-          <option value="ownvideo">🎥 Своё видео</option>
-        </select>
+        <span class="pb-group">
+          <span class="pb-label">Проект:</span>
+          <select id="projSel"></select>
+          <button id="projNew">＋ Новый проект</button>
+          <button id="projEdit" title="Настроить нишу и призыв проекта">✎ Настроить</button>
+        </span>
+        <span class="pb-group">
+          <span class="pb-label">Режим:</span>
+          <select id="videoMode">
+            <option value="faceless">🎙️ С озвучкой (биролы)</option>
+            <option value="avatar">🧑‍💼 Аватар HeyGen</option>
+            <option value="ownvideo">🎥 Своё видео</option>
+            <option value="dynamic">🔥 Бешеный монтаж (Remotion)</option>
+          </select>
+        </span>
       </div>
       <p class="hint">Вставь текст сценария — соберу ролик из контента выбранного проекта. Или напиши/надиктуй боту в Telegram.</p>
       <textarea id="scriptInput" placeholder="Вставь сюда сценарий…"></textarea>
@@ -112,6 +146,22 @@
         <audio id="voPlayer" class="vo-player" controls hidden></audio>
         <label class="vo-enhance"><input type="checkbox" id="voEnhance" checked /> ✨ Студийный звук — убрать шум и выровнять громкость</label>
         <input type="file" id="voFile" accept="audio/*" hidden />
+      </div>
+
+      <!-- БЫСТРЫЙ ВЫБОР ГОЛОСА FREEDOM на это видео (только faceless + Freedom, без клона) -->
+      <div id="freedomQuick" class="voice-own" hidden>
+        <span class="vo-label">🇰🇿 Голос Freedom на это видео <span class="opt">(по умолчанию — из настроек)</span></span>
+        <div class="vo-controls">
+          <select id="qFreedomVoice"></select>
+          <select id="qFreedomEmotion">
+            <option value="neutral">Нейтрально</option>
+            <option value="happy">Радостно</option>
+            <option value="surprised">Удивлённо</option>
+            <option value="sad">Грустно</option>
+            <option value="angry">Сердито</option>
+            <option value="fearful">Испуганно</option>
+          </select>
+        </div>
       </div>
 
       <div class="row">
@@ -193,30 +243,93 @@
         </div>
 
         <div class="field">
-          <label>Ключ ElevenLabs — озвучка <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">где взять</a> <span class="badge quota" id="elevenQuota"></span></label>
-          <div class="inline">
-            <input id="elevenKey" type="password" placeholder="xi-api-key…" />
-            <button id="elevenCheck" title="Проверить баланс">↻ баланс</button>
+          <label>🗣️ Движок озвучки</label>
+          <select id="voiceProvider">
+            <option value="elevenlabs">ElevenLabs — англ/рус, премиум</option>
+            <option value="freedom">Freedom Speech — казахский/русский 🇰🇿</option>
+          </select>
+        </div>
+
+        <!-- ОЗВУЧКА: ElevenLabs -->
+        <div id="elevenFields">
+          <div class="field">
+            <label>Ключ ElevenLabs — озвучка <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank">где взять</a> <span class="badge quota" id="elevenQuota"></span></label>
+            <div class="inline">
+              <input id="elevenKey" type="password" placeholder="xi-api-key…" />
+              <button id="elevenCheck" title="Проверить баланс">↻ баланс</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>🎙️ Голос и динамичность</label>
+            <div class="inline">
+              <select id="voicePreset">
+                <option value="IKne3meq5aSn9XLyUdCD">Charlie — спокойный</option>
+                <option value="TX3LPaxmHKxFdv7VOQHJ">Liam — энергичный</option>
+                <option value="pNInz6obpgDQGcFmaJgB">Adam — уверенный</option>
+                <option value="custom">Свой Voice ID…</option>
+              </select>
+              <select id="voiceDyn">
+                <option value="calm">Спокойно</option>
+                <option value="balanced">Сбалансированно</option>
+                <option value="energetic">Энергично</option>
+              </select>
+            </div>
+            <input id="voiceId" type="text" placeholder="свой Voice ID (ElevenLabs)" style="margin-top:8px; display:none" />
+            <p class="sub" style="margin-top:8px">Паузы: ставь знаки препинания или тег <b>&lt;break time="0.6s"/&gt;</b> в сценарии.</p>
           </div>
         </div>
 
-        <div class="field">
-          <label>🎙️ Голос и динамичность</label>
-          <div class="inline">
-            <select id="voicePreset">
-              <option value="IKne3meq5aSn9XLyUdCD">Charlie — спокойный</option>
-              <option value="TX3LPaxmHKxFdv7VOQHJ">Liam — энергичный</option>
-              <option value="pNInz6obpgDQGcFmaJgB">Adam — уверенный</option>
-              <option value="custom">Свой Voice ID…</option>
-            </select>
-            <select id="voiceDyn">
-              <option value="calm">Спокойно</option>
-              <option value="balanced">Сбалансированно</option>
-              <option value="energetic">Энергично</option>
-            </select>
+        <!-- ОЗВУЧКА: Freedom Speech -->
+        <div id="freedomFields" hidden>
+          <div class="field">
+            <label>Ключ Freedom Speech <a href="https://freedomspeech.kz/docs" target="_blank">где взять</a></label>
+            <div class="inline">
+              <input id="freedomKey" type="password" placeholder="Freedom Speech API key…" />
+            </div>
           </div>
-          <input id="voiceId" type="text" placeholder="свой Voice ID (ElevenLabs)" style="margin-top:8px; display:none" />
-          <p class="sub" style="margin-top:8px">Паузы: ставь знаки препинания или тег <b>&lt;break time="0.6s"/&gt;</b> в сценарии.</p>
+
+          <div class="field">
+            <label>🎙️ Голос и эмоция <span class="badge" id="freedomTest"></span></label>
+            <div class="inline">
+              <select id="freedomVoice">
+                <option value="tomiris">Томирис ♀ (Tomiris)</option>
+                <option value="taymas">Таймас ♂ (Taymas)</option>
+                <option value="aigerim">Айгерим ♀</option>
+                <option value="aidana">Айдана ♀</option>
+                <option value="saule">Сауле ♀</option>
+                <option value="moldir">Молдир ♀</option>
+                <option value="nurasyl">Нурасыл ♂</option>
+                <option value="berik">Берик ♂</option>
+                <option value="alikhan">Алихан ♂</option>
+                <option value="arlan">Арлан ♂</option>
+                <option value="temir">Темир ♂</option>
+                <option value="journalist">Диктор ♂ (Journalist)</option>
+                <option value="confident">Уверенный ♂ (Confident)</option>
+                <option value="call_center_woman">Колл-центр Алтынай ♀</option>
+              </select>
+              <select id="freedomEmotion">
+                <option value="neutral">Нейтрально</option>
+                <option value="happy">Радостно</option>
+                <option value="surprised">Удивлённо</option>
+                <option value="sad">Грустно</option>
+                <option value="angry">Сердито</option>
+                <option value="fearful">Испуганно</option>
+              </select>
+              <button id="freedomTestBtn" title="Проверить ключ и послушать голос">🔊 Тест</button>
+            </div>
+            <p class="sub" style="margin-top:8px">Язык (казахский/русский) определяется автоматически. Тайминги титров берутся из ключа ElevenLabs, если он указан.<br/><b>Живой голос:</b> паузы — ставь <b>.</b> и <b>,</b> почаще; ударение — <b>+</b> перед нужной гласной (напр. <b>+Юрий</b>); можно <b>&lt;pause&gt;</b>, <b>&lt;louder&gt;…&lt;/louder&gt;</b>, <b>&lt;slower&gt;…&lt;/slower&gt;</b>. Эти знаки в титры <u>не попадают</u>. <span class="opt">Taymas — только казахский (для русского авто-выберется Tomiris).</span></p>
+          </div>
+
+          <div class="field">
+            <label class="vo-enhance"><input type="checkbox" id="freedomClone" /> 🎤 Клонировать свой голос — озвучивать ролики голосом из записи</label>
+            <div class="inline" id="freedomCloneRow" style="margin-top:8px; display:none">
+              <button id="freedomClonePick" class="ghost">📁 Выбрать запись голоса…</button>
+              <span class="vo-status" id="freedomCloneStatus"></span>
+              <button id="freedomCloneClear" class="vo-clear" hidden>✕ убрать</button>
+            </div>
+            <p class="sub" id="freedomCloneHint" style="margin-top:8px; display:none">Загрузи 10–30 сек чистой речи (твой голос или любой образец) — ролики будут озвучены этим голосом. Выбор голоса выше при этом игнорируется.</p>
+          </div>
         </div>
       </div>
 
@@ -311,6 +424,20 @@
         <div class="field">
           <label>🔊 Звуки переходов</label>
           <label class="vo-enhance"><input type="checkbox" id="transitionSfx" /> Добавлять вжухи/risers из папки «Звуки» <span class="opt">(по умолчанию выкл)</span></label>
+        </div>
+
+        <div class="field">
+          <label>✨ Анимированные титры + CTA <span class="opt">— красивее, но рендер дольше (Remotion)</span></label>
+          <label class="vo-enhance"><input type="checkbox" id="remotionOverlay" /> Включить анимированный оверлей</label>
+          <label class="vo-enhance" id="remotionCapsRow" style="margin-top:6px"><input type="checkbox" id="remotionCaptions" checked /> Анимированные титры вместо обычных <span class="opt">(иначе только CTA-карточка)</span></label>
+          <div id="ctaFields" style="margin-top:10px">
+            <label style="margin:0 0 4px">Текст CTA-карточки (по желанию):</label>
+            <input id="ctaLines" type="text" placeholder="Узнай, | как работает | система  (разделяй « | »)" />
+            <div class="row" style="margin-top:6px; gap:8px">
+              <input id="ctaButton" type="text" placeholder="Жми на кнопку →" style="flex:1" />
+              <input id="ctaUrgency" type="text" placeholder="🔥 Места ограничены" style="flex:1" />
+            </div>
+          </div>
         </div>
 
         <div class="field">

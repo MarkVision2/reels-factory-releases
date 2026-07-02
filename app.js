@@ -3,69 +3,16 @@ const $ = (id) => document.getElementById(id);
 const FIELDS = ["telegramToken", "elevenKey", "voiceProvider", "freedomKey", "freedomVoice", "freedomEmotion", "voiceId", "openaiKey", "pexelsKey", "genProvider", "falKey", "falModel", "genMax", "kieKey", "musicUrl", "accentColor", "heygenKey", "heygenAvatarId", "heygenVoiceId"];
 
 // вкладки
-function activateTab(name, { onEnter = true } = {}) {
-  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-  const tab = $("tab-" + name); if (tab) tab.classList.add("active");
-  if (onEnter && name === "library") refreshLibrary();
-  if (onEnter && name === "content") browseTo("");
-}
 document.querySelectorAll(".nav-btn").forEach((btn) => {
-  btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    btn.classList.add("active");
+    $("tab-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "library") refreshLibrary();
+    if (btn.dataset.tab === "content") browseTo("");
+  });
 });
-
-// модалка ввода имени (заменяет prompt(), который в Electron не работает)
-function askName(title = "Новый проект", placeholder = "Название", okLabel = "Создать", hint = "") {
-  return new Promise((resolve) => {
-    $("nmTitle").textContent = title;
-    $("nmInput").value = "";
-    $("nmInput").placeholder = placeholder;
-    $("nmOk").textContent = okLabel;
-    const hintEl = $("nmHint");
-    if (hintEl) { hintEl.textContent = hint; hintEl.style.display = hint ? "" : "none"; }
-    $("nameModal").hidden = false;
-    setTimeout(() => $("nmInput").focus(), 30);
-    const done = (val) => {
-      $("nameModal").hidden = true;
-      $("nmOk").onclick = null; $("nmCancel").onclick = null; $("nmInput").onkeydown = null;
-      resolve(val);
-    };
-    const submit = () => { const v = $("nmInput").value.trim(); if (v) done(v); };
-    $("nmOk").onclick = submit;
-    $("nmCancel").onclick = () => done(null);
-    $("nmInput").onkeydown = (e) => {
-      if (e.key === "Enter") { e.preventDefault(); submit(); }
-      else if (e.key === "Escape") { e.preventDefault(); done(null); }
-    };
-  });
-}
-
-// модалка проекта: имя + ниша + призыв. Возвращает {name, brief} или null.
-// mode "edit" — имя только для показа (переименование не делаем), редактируем бриф.
-function openProjectModal({ mode = "create", name = "", brief = {} } = {}) {
-  return new Promise((resolve) => {
-    const isEdit = mode === "edit";
-    $("pmHead").textContent = isEdit ? "Настройка проекта" : "Новый проект";
-    $("pmName").value = name;
-    $("pmName").disabled = isEdit;
-    $("pmNiche").value = brief.niche || "";
-    $("pmCta").value = brief.cta || "";
-    $("pmSave").textContent = isEdit ? "Сохранить" : "Создать проект";
-    $("projModal").hidden = false;
-    setTimeout(() => (isEdit ? $("pmNiche") : $("pmName")).focus(), 30);
-    const done = (val) => {
-      $("projModal").hidden = true;
-      $("pmSave").onclick = null; $("pmCancel").onclick = null;
-      resolve(val);
-    };
-    $("pmSave").onclick = () => {
-      const nm = $("pmName").value.trim();
-      if (!nm) { $("pmName").focus(); return; }
-      done({ name: nm, brief: { niche: $("pmNiche").value.trim(), cta: $("pmCta").value.trim() } });
-    };
-    $("pmCancel").onclick = () => done(null);
-  });
-}
 
 // загрузка конфига
 const VOICE_PRESETS = ["IKne3meq5aSn9XLyUdCD", "TX3LPaxmHKxFdv7VOQHJ", "pNInz6obpgDQGcFmaJgB"];
@@ -78,12 +25,6 @@ async function loadCfg() {
   if ($("themeSel")) $("themeSel").value = theme;
   // звуки переходов
   if ($("transitionSfx")) $("transitionSfx").checked = !!cfg.transitionSfx;
-  // клонирование голоса Freedom
-  freedomCloneRef = cfg.freedomCloneRef || "";
-  if ($("freedomClone")) $("freedomClone").checked = !!cfg.freedomClone;
-  if ($("freedomCloneStatus")) $("freedomCloneStatus").textContent = freedomCloneRef ? "✓ образец загружен" : "";
-  if ($("freedomCloneClear")) $("freedomCloneClear").hidden = !freedomCloneRef;
-  applyFreedomClone();
   // анимированные титры + CTA (Remotion)
   if ($("remotionOverlay")) $("remotionOverlay").checked = !!cfg.remotionOverlay;
   if ($("remotionCaptions")) $("remotionCaptions").checked = cfg.remotionCaptions !== false;
@@ -95,7 +36,6 @@ async function loadCfg() {
   applyGenProvider();
   // движок озвучки: ElevenLabs/Freedom → показать нужные поля
   applyVoiceProvider();
-  populateFreedomVoices();
   // счётчики баланса по заданным ключам — сразу
   refreshAllQuotas();
   // голос: пресет/кастом
@@ -172,8 +112,6 @@ $("saveBtn").addEventListener("click", async () => {
   cfg.voiceStability = dm.s; cfg.voiceStyle = dm.st;
   if ($("themeSel")) cfg.theme = $("themeSel").value;
   if ($("transitionSfx")) cfg.transitionSfx = $("transitionSfx").checked;
-  if ($("freedomClone")) cfg.freedomClone = $("freedomClone").checked;
-  cfg.freedomCloneRef = freedomCloneRef || "";
   if ($("remotionOverlay")) cfg.remotionOverlay = $("remotionOverlay").checked;
   if ($("remotionCaptions")) cfg.remotionCaptions = $("remotionCaptions").checked;
   if ($("ctaLines")) cfg.ctaLines = $("ctaLines").value.split("|").map((s) => s.trim()).filter(Boolean);
@@ -209,88 +147,7 @@ function applyVoiceProvider() {
   if ($("elevenFields")) $("elevenFields").hidden = p === "freedom";
   if ($("freedomFields")) $("freedomFields").hidden = p !== "freedom";
 }
-if ($("voiceProvider")) $("voiceProvider").addEventListener("change", () => { applyVoiceProvider(); populateFreedomVoices(); applyFreedomQuick(); });
-
-// живой список голосов Freedom Speech с сервера (с сохранением выбранного)
-let freedomVoicesLoaded = false;
-async function populateFreedomVoices() {
-  if (freedomVoicesLoaded || !$("freedomVoice") || !window.api.freedomVoices) return;
-  if ($("voiceProvider") && $("voiceProvider").value !== "freedom") return; // грузим лениво при первом показе
-  try {
-    const r = await window.api.freedomVoices();
-    if (!r || !r.ok || !r.voices?.length) return;
-    const cur = $("freedomVoice").value;
-    const opt = (v) => `<option value="${v.id}">${v.name}${v.type === "custom" ? "" : " ⭐"}</option>`;
-    const builtin = r.voices.filter((v) => v.type !== "custom");
-    const custom = r.voices.filter((v) => v.type === "custom");
-    $("freedomVoice").innerHTML = builtin.map(opt).join("") + custom.map(opt).join("");
-    if ([...builtin, ...custom].some((v) => v.id === cur)) $("freedomVoice").value = cur;
-    freedomVoicesLoaded = true;
-    applyFreedomQuick(); // обновить и быстрый селект на вкладке «Создать»
-  } catch { /* оставляем встроенный список */ }
-}
-
-// кнопка «Тест»: проверить ключ + послушать голос
-if ($("freedomTestBtn")) $("freedomTestBtn").addEventListener("click", async () => {
-  const b = $("freedomTest"); const btn = $("freedomTestBtn");
-  const key = $("freedomKey").value.trim();
-  if (!key) { b.textContent = "✗ вставь ключ"; b.className = "badge err"; return; }
-  b.textContent = "синтезирую…"; b.className = "badge"; btn.disabled = true;
-  try {
-    const r = await window.api.testFreedom({ key, voice: $("freedomVoice").value, emotion: $("freedomEmotion").value });
-    if (r && r.ok && r.audio) {
-      b.textContent = "✓ ключ рабочий"; b.className = "badge ok";
-      try { const a = new Audio("data:audio/wav;base64," + r.audio); a.play().catch(() => {}); } catch {}
-    } else {
-      b.textContent = "✗ " + (r?.error || "ошибка"); b.className = "badge err";
-    }
-  } catch (e) { b.textContent = "✗ " + (e.message || "ошибка"); b.className = "badge err"; }
-  finally { btn.disabled = false; }
-});
-
-// --- клонирование голоса Freedom ---
-let freedomCloneRef = "";
-function applyFreedomClone() {
-  const on = !!($("freedomClone") && $("freedomClone").checked);
-  if ($("freedomCloneRow")) $("freedomCloneRow").style.display = on ? "" : "none";
-  if ($("freedomCloneHint")) $("freedomCloneHint").style.display = on ? "" : "none";
-  if ($("freedomVoice")) $("freedomVoice").disabled = on;   // при клоне выбор голоса не нужен
-  if ($("freedomEmotion")) $("freedomEmotion").disabled = on;
-  applyFreedomQuick();
-}
-if ($("freedomClone")) $("freedomClone").addEventListener("change", applyFreedomClone);
-if ($("freedomClonePick")) $("freedomClonePick").addEventListener("click", async () => {
-  if (!window.api.pickFreedomClone) return;
-  const r = await window.api.pickFreedomClone();
-  if (r && r.ok && r.path) {
-    freedomCloneRef = r.path;
-    $("freedomCloneStatus").textContent = "✓ " + (r.name || "образец загружен");
-    $("freedomCloneClear").hidden = false;
-  } else if (r && r.error) { $("freedomCloneStatus").textContent = "✗ " + r.error; }
-});
-if ($("freedomCloneClear")) $("freedomCloneClear").addEventListener("click", () => {
-  freedomCloneRef = ""; $("freedomCloneStatus").textContent = ""; $("freedomCloneClear").hidden = true;
-});
-
-// --- быстрый выбор голоса Freedom на конкретное видео (вкладка «Создать») ---
-function applyFreedomQuick() {
-  const prov = $("voiceProvider") ? $("voiceProvider").value : "elevenlabs";
-  const mode = $("videoMode") ? $("videoMode").value : "faceless";
-  const clone = !!($("freedomClone") && $("freedomClone").checked);
-  const show = prov === "freedom" && mode === "faceless" && !clone;
-  if ($("freedomQuick")) $("freedomQuick").hidden = !show;
-  if (show) syncFreedomQuickOptions();
-}
-function syncFreedomQuickOptions() {
-  if (!$("qFreedomVoice") || !$("freedomVoice")) return;
-  if ($("qFreedomVoice").options.length !== $("freedomVoice").options.length) {
-    $("qFreedomVoice").innerHTML = $("freedomVoice").innerHTML;
-  }
-  if (!$("qFreedomVoice").dataset.touched) $("qFreedomVoice").value = $("freedomVoice").value;
-  if ($("qFreedomEmotion") && !$("qFreedomEmotion").dataset.touched && $("freedomEmotion")) $("qFreedomEmotion").value = $("freedomEmotion").value;
-}
-if ($("qFreedomVoice")) $("qFreedomVoice").addEventListener("change", () => { $("qFreedomVoice").dataset.touched = "1"; });
-if ($("qFreedomEmotion")) $("qFreedomEmotion").addEventListener("change", () => { $("qFreedomEmotion").dataset.touched = "1"; });
+if ($("voiceProvider")) $("voiceProvider").addEventListener("change", applyVoiceProvider);
 
 // единый счётчик баланса по ключу (ElevenLabs / kie.ai / HeyGen / Pexels)
 async function showQuota(service, keyId, badgeId, manual = false) {
@@ -501,11 +358,8 @@ function openClipEditor(f) {
 }
 $("cbBack").addEventListener("click", () => browseTo(cbRel.split(sep).slice(0, -1).join(sep)));
 $("cbMkdir").addEventListener("click", async () => {
-  const name = await askName("Новая папка (проект)", "Название папки", "Создать");
-  if (!name) return;
-  const r = await window.api.mkdirContent(cbRel, name);
-  if (r && r.ok === false) { alert(r.error || "Не удалось создать папку"); return; }
-  browseTo(cbRel);
+  const name = prompt("Название папки (проекта):"); if (!name) return;
+  await window.api.mkdirContent(cbRel, name); browseTo(cbRel);
 });
 $("cbAdd").addEventListener("click", async () => { await window.api.addContentTo(cbRel); browseTo(cbRel); });
 
@@ -532,13 +386,9 @@ async function refreshProjects() {
   sel.appendChild(optAll);
   projects.forEach((p) => { const o = document.createElement("option"); o.value = p; o.textContent = p; sel.appendChild(o); });
   sel.value = active || "";
-  $("projEdit").disabled = !sel.value; // «Все папки» — настраивать нечего
 }
 refreshProjects();
-$("projSel").addEventListener("change", () => {
-  window.api.setActiveProject($("projSel").value);
-  $("projEdit").disabled = !$("projSel").value;
-});
+$("projSel").addEventListener("change", () => window.api.setActiveProject($("projSel").value));
 // режим видео (faceless / avatar) — сохраняем сразу
 function applyMode(m) {
   const own = m === "ownvideo" || m === "dynamic";
@@ -548,7 +398,6 @@ function applyMode(m) {
   $("createOwnBtn").hidden = !own;
   // блок «своя озвучка» — только в режиме «С озвучкой» (faceless)
   if ($("voiceOwnBox")) $("voiceOwnBox").hidden = (m !== "faceless");
-  applyFreedomQuick(); // быстрый выбор голоса Freedom — только в faceless
   $("videoMode").classList.toggle("mode-hot", m === "dynamic"); // акцент на «горячем» режиме
   if (own) {
     const dyn = m === "dynamic";
@@ -574,24 +423,11 @@ $("createOwnBtn").addEventListener("click", async () => {
   else setJob("err", "❌ " + r.error);
 });
 $("projNew").addEventListener("click", async () => {
-  const res = await openProjectModal({ mode: "create" });
-  if (!res) return;
-  const r = await window.api.createProject(res.name, res.brief);
-  if (!r.ok) { alert(r.error || "Не удалось создать"); return; }
-  await refreshProjects();                    // выпадающий список + активный проект = новый
-  $("projSel").value = r.name;
-  // сразу ведём в папку проекта во вкладке «Мой контент» — там кнопка «＋ Добавить файлы» работает
-  activateTab("content", { onEnter: false });
-  await browseTo("Видео" + sep + r.name);
-});
-$("projEdit").addEventListener("click", async () => {
-  const name = $("projSel").value;
-  if (!name) { alert("Сначала выбери конкретный проект (не «Все папки»)."); return; }
-  const brief = await window.api.getProjectBrief(name).catch(() => ({}));
-  const res = await openProjectModal({ mode: "edit", name, brief: brief || {} });
-  if (!res) return;
-  const r = await window.api.setProjectBrief(name, res.brief);
-  if (!r.ok) alert(r.error || "Не удалось сохранить");
+  const name = prompt("Название нового проекта:");
+  if (!name) return;
+  const r = await window.api.createProject(name);
+  if (r.ok) { await refreshProjects(); $("projSel").value = r.name; }
+  else alert(r.error || "Не удалось создать");
 });
 
 // --- своя озвучка: загрузка файла или запись с микрофона ---
@@ -654,12 +490,7 @@ $("createBtn").addEventListener("click", async () => {
   if (!script && !voiceAudioPath) { setJob("err", "Вставь сценарий или добавь свою озвучку"); return; }
   setJob("busy", "Запускаю…");
   $("createBtn").disabled = true;
-  const opts = { voiceAudioPath, voiceEnhance: voiceAudioPath ? $("voEnhance").checked : false };
-  if ($("freedomQuick") && !$("freedomQuick").hidden) { // на это видео — голос/эмоция из быстрого селекта
-    opts.freedomVoice = $("qFreedomVoice").value;
-    opts.freedomEmotion = $("qFreedomEmotion").value;
-  }
-  const r = await window.api.createVideo(script, opts);
+  const r = await window.api.createVideo(script, { voiceAudioPath, voiceEnhance: voiceAudioPath ? $("voEnhance").checked : false });
   $("createBtn").disabled = false;
   if (r.ok) setJob("ok", "✅ Готово — во вкладке «Готовые видео»" + (r.sentToTg ? " + отправлено в Telegram" : ""));
   else setJob("err", "❌ " + r.error);

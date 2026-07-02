@@ -88,10 +88,27 @@ export const listProjects = async (p = paths()) => {
     return ents.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
   } catch { return []; }
 };
-export const createProject = async (name, p = paths()) => {
+export const createProject = async (name, p = paths(), brief = null) => {
   const clean = String(name || "").replace(/[\/\\:*?"<>|]/g, "").trim();
   if (!clean) throw new Error("Пустое имя");
   for (const d of [p.videos, p.music, p.sounds]) await fs.mkdir(path.join(d, clean), { recursive: true });
+  if (brief && (brief.niche || brief.cta)) await writeProjectBrief(clean, brief, p);
+  return clean;
+};
+
+// бриф проекта: ниша/направление + призыв. Лежит в .project.json внутри папки проекта.
+// Ниша рулит подбором биролов (GPT-промпт) и текстом CTA — ролик затачивается под нишу.
+export const projectBriefPath = (project, p = paths()) => path.join(p.videos, project, ".project.json");
+export const readProjectBrief = async (project, p = paths()) => {
+  if (!project) return {};
+  try { return JSON.parse(await fs.readFile(projectBriefPath(project, p), "utf8")); } catch { return {}; }
+};
+export const writeProjectBrief = async (project, brief = {}, p = paths()) => {
+  if (!project) return {};
+  const dir = path.join(p.videos, project);
+  await fs.mkdir(dir, { recursive: true });
+  const clean = { niche: String(brief.niche || "").trim(), cta: String(brief.cta || "").trim() };
+  await fs.writeFile(projectBriefPath(project, p), JSON.stringify(clean, null, 2)).catch(() => {});
   return clean;
 };
 const subOrRoot = (root, project) => (project ? path.join(root, project) : root);
@@ -105,7 +122,9 @@ export const buildLocalCatalog = async ({ p = paths(), project = "", openaiKey =
   // сигнатура (пути+размеры+описания) → если совпала, берём кэш
   const stats = await Promise.all(files.map((f) => fs.stat(f).then((s) => `${f}:${s.size}`).catch(() => "")));
   await Promise.all([...new Set(files.map((f) => path.dirname(f)))].map(getMeta));
-  const sig = stats.sort().join("|") + "##" + JSON.stringify(metaByDir);
+  // vision-флаг в подписи: появился OpenAI-ключ → кэш без Vision-тегов инвалидируется, клипы
+  // распознаются заново (иначе на «безымянных» клипах подбор идёт вслепую → биролы не в тему).
+  const sig = stats.sort().join("|") + "##" + JSON.stringify(metaByDir) + "##vision:" + (openaiKey ? "1" : "0");
   const cacheFile = path.join(p.root, `.catalog-${project || "all"}.json`);
   try {
     const cache = JSON.parse(await fs.readFile(cacheFile, "utf8"));
@@ -162,19 +181,32 @@ const audioDurations = async (files, root) => {
   return out;
 };
 
-// фоновая музыка — только полноценные треки (≥18с), короткие звуки игнорируем
+// НЕ музыка, а звуковые эффекты/шумы — по названию файла (часы, тиканье, взрыв, riser,
+// шестерёнки, сирена и т.п.). Такие давали «непонятный шум на фоне» вместо музыки.
+const SFX_NAME = /(clock|tick|tik[\s_.-]?tak|tikay|chasy|час(ы|ик|о)|шестерен|shesteren|gear|riser|взрыв|vzryiv|bomb|explos|whoosh|свист|siren|alarm|beep|ding|unknown|noise|ambient|rain|wind|thunder)/i;
+
+// фоновая музыка — полноценные треки (≥18с), БЕЗ звуковых эффектов/шумов.
+// FALLBACK: если у активного проекта музыки нет — берём из ОБЩЕЙ библиотеки (все папки).
 export const pickMusic = async (p = paths(), project = "") => {
-  const files = await walk(subOrRoot(p.music, project), AUDIO_EXT);
+  let files = await walk(subOrRoot(p.music, project), AUDIO_EXT);
+  if (!files.length && project) files = await walk(p.music, AUDIO_EXT); // ← из всех папок
+  files = files.filter((f) => !SFX_NAME.test(path.basename(f))); // выкинуть SFX/шумы
   if (!files.length) return null;
   const durs = await audioDurations(files, p.root);
   const tracks = durs.filter((d) => d.dur >= 18).map((d) => d.f);
-  const pool = tracks.length ? tracks : files;
+  let pool = tracks.length ? tracks : files;
+  // ПРИОРИТЕТ ЭНЕРГИЧНЫМ: сначала треки без пометок «медленный/chill» (slowed/reverb/lofi/…),
+  // чтобы фон был бодрый и вовлекающий, а не убаюкивающий.
+  const SLOW_NAME = /(slow|reverb|chill|lo[\s_-]?fi|ambient|calm|relax|sleep|acoustic|piano|медленн|спокойн)/i;
+  const energetic = pool.filter((f) => !SLOW_NAME.test(path.basename(f)));
+  if (energetic.length) pool = energetic;
   return pool[Math.floor((Date.now() / 1000) % pool.length)];
 };
 
-// звуки переходов — только короткие (≤8с)
+// звуки переходов — только короткие (≤8с). Тоже с fallback на общую библиотеку.
 export const listSounds = async (p = paths(), project = "") => {
-  const files = await walk(subOrRoot(p.sounds, project), AUDIO_EXT);
+  let files = await walk(subOrRoot(p.sounds, project), AUDIO_EXT);
+  if (!files.length && project) files = await walk(p.sounds, AUDIO_EXT);
   if (!files.length) return [];
   const durs = await audioDurations(files, p.root);
   const sfx = durs.filter((d) => d.dur > 0 && d.dur <= 8).map((d) => d.f);
